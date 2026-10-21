@@ -1,297 +1,278 @@
--- 001_init.sql — schema เริ่มต้นของ ppc_tb (MySQL 8.4, utf8mb4)
--- รันด้วย `npm run migrate` (บัญชี tb_migrate) — ห้ามแก้ไฟล์นี้หลังรันบน production แล้ว
--- แก้ schema ให้เพิ่มไฟล์ 00N_*.sql ใหม่ (runner ตรวจ checksum ถ้าไฟล์เก่าถูกแก้จะไม่ยอมรัน)
---
--- หลักร่วม:
---   * ตารางหลักมี version (optimistic lock: UPDATE … WHERE id=? AND version=?) และ deleted_at (soft delete)
---   * วันที่เก็บเป็น DATE ค.ศ. แสดง พ.ศ. ที่ UI
---   * created_by/updated_by = tb_users.id (NULL = ข้อมูลที่ import จากระบบเดิม)
---   * บัญชีแอป tb_app ไม่มีสิทธิ์ DELETE (ยกเว้น tb_settings) → ลบ = SET deleted_at
+-- 001_init.sql = docs/ppc_tb_schema.sql ตัดส่วนบัญชี MySQL ท้ายไฟล์ออก (CLAUDE.md §4.1)
+-- ห้ามแก้ไฟล์นี้หลังรันบน production แล้ว — แก้ schema ให้เพิ่มไฟล์ 00N_*.sql ใหม่
 
-SET NAMES utf8mb4;
+-- =====================================================================
+-- ppc_tb : ทะเบียนวัณโรคและผู้สัมผัส รพ.พลับพลาชัย (ย้ายจาก Google Sheets)
+-- แม็ปจาก Apps Script: P_FIELDS / C_FIELDS / V_FIELDS / DB_Users / DB_Log / DB_Settings
+-- ต้องใช้ MySQL 8.0.16+ หรือ MariaDB 10.4+ (CHECK constraint และ JSON)
+-- =====================================================================
 
--- ── หน่วยบริการ ────────────────────────────────────────────────────────────────
+CREATE DATABASE IF NOT EXISTS ppc_tb
+  DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE ppc_tb;
+
+-- ---------------------------------------------------------------------
+-- หน่วยบริการ (เดิม DB_Users: หน่วย + PIN + สิทธิ์)
+-- ---------------------------------------------------------------------
 CREATE TABLE tb_units (
-  id          SMALLINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  name        VARCHAR(100) NOT NULL,
-  role        ENUM('admin','unit') NOT NULL COMMENT 'admin = รพ.พลับพลาชัย, unit = รพ.สต.',
-  sort_order  SMALLINT NOT NULL DEFAULT 0,
-  is_active   TINYINT(1) NOT NULL DEFAULT 1,
-  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_units_name (name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  id          SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name        VARCHAR(100) NOT NULL UNIQUE,          -- 'รพ.พลับพลาชัย', 'รพ.สต.ตาพระ', ...
+  hcode       CHAR(5) NULL,                          -- รหัสสถานพยาบาล 5 หลัก (ไว้ join HOSxP / 43 แฟ้ม)
+  role        ENUM('admin','unit') NOT NULL DEFAULT 'unit',
+  active      TINYINT(1) NOT NULL DEFAULT 1,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
 
--- ── ผู้ใช้รายคน ────────────────────────────────────────────────────────────────
+-- ผู้ใช้รายคน (แทน PIN รวมของหน่วย) ผูกกับหน่วย สิทธิ์ตามหน่วย
 CREATE TABLE tb_users (
-  id                   INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  username             VARCHAR(50) NOT NULL,
-  display_name         VARCHAR(150) NOT NULL,
-  password_hash        VARCHAR(100) NOT NULL COMMENT 'bcrypt เท่านั้น',
-  unit_id              SMALLINT UNSIGNED NOT NULL COMMENT 'สิทธิ์ admin/unit มาจาก tb_units.role',
-  is_active            TINYINT(1) NOT NULL DEFAULT 1,
-  must_change_password TINYINT(1) NOT NULL DEFAULT 1,
-  failed_logins        SMALLINT UNSIGNED NOT NULL DEFAULT 0,
-  locked_until         DATETIME NULL,
-  last_login_at        DATETIME NULL,
-  password_changed_at  DATETIME NULL,
-  created_by           INT UNSIGNED NULL,
-  updated_by           INT UNSIGNED NULL,
-  created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  version              INT UNSIGNED NOT NULL DEFAULT 1,
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_users_username (username),
-  KEY ix_users_unit (unit_id),
-  CONSTRAINT fk_users_unit FOREIGN KEY (unit_id) REFERENCES tb_units (id),
-  CONSTRAINT fk_users_created_by FOREIGN KEY (created_by) REFERENCES tb_users (id),
-  CONSTRAINT fk_users_updated_by FOREIGN KEY (updated_by) REFERENCES tb_users (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  unit_id        SMALLINT UNSIGNED NOT NULL,
+  username       VARCHAR(50) NOT NULL UNIQUE,
+  display_name   VARCHAR(100) NOT NULL,
+  password_hash  VARCHAR(100) NOT NULL,              -- bcrypt/argon2 ห้ามเก็บ PIN ตรงๆ
+  active         TINYINT(1) NOT NULL DEFAULT 1,
+  failed_logins  SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  locked_until   DATETIME NULL,
+  last_login_at  DATETIME NULL,
+  created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_users_unit FOREIGN KEY (unit_id) REFERENCES tb_units(id)
+) ENGINE=InnoDB;
 
--- ── ผู้ป่วย index (DB_Patients) ───────────────────────────────────────────────
--- ชื่อ/อายุ/สิทธิ์ เป็น "สำเนา" จาก HOSxP ตอนบันทึก (hosxp_synced_at) — ทะเบียนเปิดได้แม้ HOSxP ปิด
+-- ---------------------------------------------------------------------
+-- ผู้ป่วยวัณโรค (index case) เดิม DB_Patients
+-- id เก็บรูปแบบเดิม 'P' + 10 hex เพื่อให้ข้อมูลที่ย้ายมาและประวัติอ้างอิงกันได้
+-- ---------------------------------------------------------------------
 CREATE TABLE tb_patients (
-  id              CHAR(11) NOT NULL COMMENT 'P + 10 hex (คงรหัสเดิมจาก Sheet)',
-  fy              SMALLINT UNSIGNED NULL COMMENT 'ปีงบ พ.ศ.',
-  seq             INT UNSIGNED NULL COMMENT 'ลำดับในปีงบ',
-  full_name       VARCHAR(150) NOT NULL,
-  hn              VARCHAR(20) NULL,
-  tb_number       VARCHAR(30) NULL,
-  cid             CHAR(13) NULL,
-  pttype          VARCHAR(100) NULL COMMENT 'สิทธิการรักษา',
-  sex             VARCHAR(10) NULL,
-  age             TINYINT UNSIGNED NULL,
-  birthday        DATE NULL,
-  address         VARCHAR(255) NULL COMMENT 'บ้านเลขที่/หมู่',
-  tambon          VARCHAR(100) NULL COMMENT 'ตำบล/พื้นที่',
-  unit_id         SMALLINT UNSIGNED NULL COMMENT 'รพ.สต.รับผิดชอบ',
-  phone           VARCHAR(50) NULL,
-  lat             DECIMAL(9,6) NULL,
-  lng             DECIMAL(9,6) NULL,
-  comorbidity     VARCHAR(500) NULL COMMENT 'โรคร่วม (U/D)',
-  hiv_result      VARCHAR(50) NULL,
-  patient_type    VARCHAR(50) NULL COMMENT 'ประเภทผู้ป่วย NEW/Relapse/…',
-  reg_place       VARCHAR(150) NULL COMMENT 'สถานที่ลงทะเบียน',
-  diag_method     VARCHAR(255) NULL,
-  rif_resistance  VARCHAR(50) NULL,
-  diag_date       DATE NULL,
-  start_date      DATE NULL COMMENT 'วันเริ่มยา',
-  regimen         VARCHAR(150) NULL,
-  admit_date      DATE NULL,
-  discharge_date  DATE NULL,
-  lft             VARCHAR(500) NULL,
-  outcome         VARCHAR(50) NULL COMMENT 'ผลการรักษา',
-  outcome_date    DATE NULL COMMENT 'วันสรุปผล',
-  note            TEXT NULL,
-  hosxp_synced_at DATETIME NULL COMMENT 'เวลาที่ดึงสำเนาจาก HOSxP ล่าสุด',
-  created_by      INT UNSIGNED NULL,
-  updated_by      INT UNSIGNED NULL,
-  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  version         INT UNSIGNED NOT NULL DEFAULT 1,
-  deleted_at      DATETIME NULL,
-  PRIMARY KEY (id),
-  KEY ix_patients_hn (hn),
-  KEY ix_patients_cid (cid),
-  KEY ix_patients_fy (fy, start_date),
-  KEY ix_patients_start (start_date),
-  KEY ix_patients_unit (unit_id),
-  CONSTRAINT ck_patients_id CHECK (REGEXP_LIKE(id, '^P[0-9a-f]{10}$', 'c')),
-  CONSTRAINT ck_patients_cid CHECK (cid IS NULL OR REGEXP_LIKE(cid, '^[0-9]{13}$')),
-  CONSTRAINT fk_patients_unit FOREIGN KEY (unit_id) REFERENCES tb_units (id),
-  CONSTRAINT fk_patients_created_by FOREIGN KEY (created_by) REFERENCES tb_users (id),
-  CONSTRAINT fk_patients_updated_by FOREIGN KEY (updated_by) REFERENCES tb_users (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ── ติดตามระหว่างรักษา หมวด 4 (slot 1–12) ──────────────────────────────────────
--- slot 1–5 = เดือน2 CXR, เดือน2 AFB, เดือน5 AFB, เดือน6 CXR, เดือน6 AFB (คอลัมน์เดิมใน Sheet)
--- ลบช่อง = SET deleted_at; เพิ่มช่องเดิมกลับ = INSERT … ON DUPLICATE KEY UPDATE deleted_at = NULL
-CREATE TABLE tb_treatment_followups (
-  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  patient_id  CHAR(11) NOT NULL,
-  slot        TINYINT UNSIGNED NOT NULL,
-  month_no    TINYINT UNSIGNED NULL COMMENT 'เดือนที่ของการรักษา',
-  test_type   VARCHAR(30) NULL COMMENT 'CXR / AFB / Culture / …',
-  test_date   DATE NULL,
-  result      VARCHAR(100) NULL,
-  created_by  INT UNSIGNED NULL,
-  updated_by  INT UNSIGNED NULL,
-  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  version     INT UNSIGNED NOT NULL DEFAULT 1,
-  deleted_at  DATETIME NULL,
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_followups_slot (patient_id, slot),
-  CONSTRAINT ck_followups_slot CHECK (slot BETWEEN 1 AND 12),
-  CONSTRAINT fk_followups_patient FOREIGN KEY (patient_id) REFERENCES tb_patients (id),
-  CONSTRAINT fk_followups_created_by FOREIGN KEY (created_by) REFERENCES tb_users (id),
-  CONSTRAINT fk_followups_updated_by FOREIGN KEY (updated_by) REFERENCES tb_users (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ── ผู้สัมผัส (DB_Contacts) ───────────────────────────────────────────────────
-CREATE TABLE tb_contacts (
-  id               CHAR(11) NOT NULL COMMENT 'C + 10 hex',
-  patient_id       CHAR(11) NOT NULL COMMENT 'ผู้ป่วย index',
-  fy               SMALLINT UNSIGNED NULL,
-  full_name        VARCHAR(150) NOT NULL,
-  cid              CHAR(13) NULL,
-  hn               VARCHAR(20) NULL,
-  sex              VARCHAR(10) NULL,
-  age              TINYINT UNSIGNED NULL,
-  relation         VARCHAR(100) NULL COMMENT 'ความสัมพันธ์',
-  contact_type     ENUM('household','close') NOT NULL COMMENT 'ร่วมบ้าน / ใกล้ชิด',
-  ring             TINYINT UNSIGNED NULL COMMENT 'วง 1/2/3 — รอยืนยันว่ายังใช้ไหม',
-  unit_id          SMALLINT UNSIGNED NULL COMMENT 'รพ.สต.รับผิดชอบ — ใช้กรองสิทธิ์ user unit',
-  address          VARCHAR(255) NULL COMMENT 'ที่อยู่ตามทะเบียน',
-  current_address  VARCHAR(255) NULL COMMENT 'ที่อยู่ปัจจุบัน',
-  phone            VARCHAR(50) NULL,
-  risk_group       VARCHAR(255) NULL COMMENT 'กลุ่มเสี่ยง',
-  investigate_date DATE NULL COMMENT 'ขั้น A วันสอบสวน',
-  screen_date      DATE NULL COMMENT 'ขั้น B วันคัดกรอง',
-  symptoms         VARCHAR(255) NULL COMMENT 'ซักอาการ',
-  cxr_date         DATE NULL,
-  cxr_result       VARCHAR(100) NULL,
-  screen_result    VARCHAR(100) NULL COMMENT '"ป่วยเป็นวัณโรค" = isTB',
-  new_patient_id   CHAR(11) NULL COMMENT 'ผู้ป่วยใหม่ที่แปลงจากผู้สัมผัสรายนี้',
-  tb_treat_place   VARCHAR(150) NULL COMMENT 'สถานที่รักษา กรณีไม่ได้ลงทะเบียนในระบบนี้',
-  tpt_eligible     TINYINT(1) NULL COMMENT 'ขั้น C 1 = เข้าเกณฑ์ TPT',
-  tpt_regimen      VARCHAR(50) NULL,
-  tpt_start_date   DATE NULL,
-  tpt_end_date     DATE NULL,
-  tpt_status       VARCHAR(50) NULL,
-  fu6_date         DATE NULL COMMENT 'ขั้น D',
-  fu6_result       VARCHAR(100) NULL,
-  fu12_date        DATE NULL,
-  fu12_result      VARCHAR(100) NULL,
-  fu18_date        DATE NULL,
-  fu18_result      VARCHAR(100) NULL,
-  fu24_date        DATE NULL,
-  fu24_result      VARCHAR(100) NULL,
-  note             TEXT NULL,
-  created_by       INT UNSIGNED NULL,
-  updated_by       INT UNSIGNED NULL,
-  created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  version          INT UNSIGNED NOT NULL DEFAULT 1,
-  deleted_at       DATETIME NULL,
-  PRIMARY KEY (id),
-  KEY ix_contacts_patient (patient_id, contact_type),
-  KEY ix_contacts_unit (unit_id),
-  KEY ix_contacts_new_patient (new_patient_id),
-  KEY ix_contacts_cid (cid),
-  KEY ix_contacts_hn (hn),
-  CONSTRAINT ck_contacts_id CHECK (REGEXP_LIKE(id, '^C[0-9a-f]{10}$', 'c')),
-  CONSTRAINT ck_contacts_cid CHECK (cid IS NULL OR REGEXP_LIKE(cid, '^[0-9]{13}$')),
-  CONSTRAINT fk_contacts_patient FOREIGN KEY (patient_id) REFERENCES tb_patients (id),
-  CONSTRAINT fk_contacts_new_patient FOREIGN KEY (new_patient_id) REFERENCES tb_patients (id),
-  CONSTRAINT fk_contacts_unit FOREIGN KEY (unit_id) REFERENCES tb_units (id),
-  CONSTRAINT fk_contacts_created_by FOREIGN KEY (created_by) REFERENCES tb_users (id),
-  CONSTRAINT fk_contacts_updated_by FOREIGN KEY (updated_by) REFERENCES tb_users (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ── บันทึกรายครั้ง (DB_Visits) ────────────────────────────────────────────────
--- ผูกผู้ป่วย "หรือ" ผู้สัมผัส อย่างใดอย่างหนึ่ง; client_uuid กันส่งซ้ำตอนเน็ตหลุดแล้วส่งใหม่
-CREATE TABLE tb_visits (
-  id              CHAR(11) NOT NULL COMMENT 'V + 10 hex',
-  patient_id      CHAR(11) NULL,
-  contact_id      CHAR(11) NULL,
-  visit_date      DATE NOT NULL,
-  visit_type      VARCHAR(50) NOT NULL COMMENT 'ประเภท เช่น เยี่ยมบ้าน / TPT / DOT',
-  detail          TEXT NULL,
-  next_appt_date  DATE NULL COMMENT 'วันนัดครั้งถัดไป',
-  lat             DECIMAL(9,6) NULL,
-  lng             DECIMAL(9,6) NULL,
-  gps_accuracy_m  DECIMAL(8,1) NULL,
-  client_uuid     CHAR(36) NULL,
-  created_by      INT UNSIGNED NULL,
-  updated_by      INT UNSIGNED NULL,
-  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  version         INT UNSIGNED NOT NULL DEFAULT 1,
-  deleted_at      DATETIME NULL,
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_visits_client_uuid (client_uuid),
-  KEY ix_visits_patient (patient_id, visit_date),
-  KEY ix_visits_contact (contact_id, visit_date),
-  KEY ix_visits_next_appt (next_appt_date),
-  CONSTRAINT ck_visits_id CHECK (REGEXP_LIKE(id, '^V[0-9a-f]{10}$', 'c')),
-  CONSTRAINT ck_visits_owner CHECK ((patient_id IS NULL) <> (contact_id IS NULL)),
-  CONSTRAINT fk_visits_patient FOREIGN KEY (patient_id) REFERENCES tb_patients (id),
-  CONSTRAINT fk_visits_contact FOREIGN KEY (contact_id) REFERENCES tb_contacts (id),
-  CONSTRAINT fk_visits_created_by FOREIGN KEY (created_by) REFERENCES tb_users (id),
-  CONSTRAINT fk_visits_updated_by FOREIGN KEY (updated_by) REFERENCES tb_users (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ── เป้าหมายตัวชี้วัด ──────────────────────────────────────────────────────────
-CREATE TABLE tb_targets (
-  id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  fy            SMALLINT UNSIGNED NOT NULL COMMENT 'ปีงบ พ.ศ.',
-  quarter       TINYINT UNSIGNED NOT NULL COMMENT '0 = ทั้งปีงบ, 1–4 = Q1–Q4',
-  indicator     VARCHAR(50) NOT NULL,
-  target_value  DECIMAL(10,2) NOT NULL,
+  id            VARCHAR(16) PRIMARY KEY,
+  fy            SMALLINT UNSIGNED NOT NULL,          -- ปีงบ พ.ศ. คำนวณจากวันเริ่มยา (ต.ค. = ปีงบถัดไป)
+  seq           SMALLINT UNSIGNED NULL,              -- ลำดับในทะเบียนปีงบ
+  name          VARCHAR(150) NOT NULL,
+  hn            VARCHAR(12)  NULL,
+  tb_no         VARCHAR(20)  NULL,
+  cid           CHAR(13)     NULL,
+  rights        VARCHAR(50)  NULL,                   -- สิทธิการรักษา
+  sex           ENUM('ชาย','หญิง') NULL,
+  age           TINYINT UNSIGNED NULL,
+  address       VARCHAR(200) NULL,                   -- บ้านเลขที่/หมู่
+  area          VARCHAR(100) NULL,                   -- ตำบล/พื้นที่
+  unit_id       SMALLINT UNSIGNED NULL,              -- รพ.สต.รับผิดชอบ
+  phone         VARCHAR(30)  NULL,
+  lat           DECIMAL(9,6) NULL,
+  lng           DECIMAL(9,6) NULL,
+  comorbid      VARCHAR(200) NULL,                   -- โรคร่วม (U/D)
+  hiv           VARCHAR(20)  NULL,                   -- ลบ / บวก / ไม่ได้ตรวจ
+  patient_type  VARCHAR(40)  NULL,                   -- NEW / Relapse / Transfer in / ...
+  reg_place     VARCHAR(100) NULL,
+  diag_basis    VARCHAR(200) NULL,                   -- วิธีวินิจฉัย/ผล เช่น 'AFB 1+, sputum c/s, CXR'
+  rr            VARCHAR(40)  NULL,                   -- ผลดื้อ Rifampicin
+  diag_date     DATE NULL,
+  start_date    DATE NULL,
+  regimen       VARCHAR(100) NULL,                   -- datalist ให้พิมพ์เองได้ จึงไม่ใช้ ENUM
+  admit_date    DATE NULL,
+  dc_date       DATE NULL,
+  lft           VARCHAR(300) NULL,
+  -- ผลติดตามระหว่างรักษา (เดิม m2Cxr/m2Afb/m5Afb/m6Cxr/m6Afb) ย้ายไป tb_treatment_followups
+  outcome      VARCHAR(30) NOT NULL DEFAULT 'กำลังรักษา',
+  outcome_date  DATE NULL,
+  notes         TEXT NULL,
+  version       INT UNSIGNED NOT NULL DEFAULT 1,     -- optimistic lock แทน LockService
   created_by    INT UNSIGNED NULL,
-  updated_by    INT UNSIGNED NULL,
   created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by    INT UNSIGNED NULL,
   updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  version       INT UNSIGNED NOT NULL DEFAULT 1,
-  deleted_at    DATETIME NULL,
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_targets (fy, quarter, indicator),
-  CONSTRAINT ck_targets_quarter CHECK (quarter BETWEEN 0 AND 4),
-  CONSTRAINT ck_targets_value CHECK (target_value >= 0),
-  CONSTRAINT fk_targets_created_by FOREIGN KEY (created_by) REFERENCES tb_users (id),
-  CONSTRAINT fk_targets_updated_by FOREIGN KEY (updated_by) REFERENCES tb_users (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  deleted_at    DATETIME NULL,                       -- soft delete แทน deleteRow
+  CONSTRAINT fk_pat_unit    FOREIGN KEY (unit_id)    REFERENCES tb_units(id),
+  CONSTRAINT fk_pat_created FOREIGN KEY (created_by) REFERENCES tb_users(id),
+  CONSTRAINT fk_pat_updated FOREIGN KEY (updated_by) REFERENCES tb_users(id),
+  CONSTRAINT chk_pat_cid CHECK (cid IS NULL OR cid REGEXP '^[0-9]{13}$'),
+  KEY idx_pat_fy (fy, deleted_at),
+  KEY idx_pat_hn (hn),
+  KEY idx_pat_cid (cid),
+  KEY idx_pat_unit (unit_id),
+  KEY idx_pat_outcome (outcome)
+) ENGINE=InnoDB;
 
--- ── audit log: ทุกการเพิ่ม/แก้/ลบ/login/import/export ──────────────────────────
--- ไม่มี FK ไป tb_users เพื่อให้ log อยู่ได้เสมอ (เก็บ username/unit ณ ตอนนั้นไว้ด้วย)
-CREATE TABLE tb_audit_log (
-  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  at          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  user_id     INT UNSIGNED NULL,
-  username    VARCHAR(50) NULL,
-  unit_id     SMALLINT UNSIGNED NULL,
-  ip          VARCHAR(45) NULL,
-  user_agent  VARCHAR(255) NULL,
-  action      VARCHAR(30) NOT NULL COMMENT 'create/update/delete/restore/login/login_failed/logout/import/export/migrate/convert',
-  entity      VARCHAR(30) NULL COMMENT 'patient/contact/visit/followup/target/user/setting',
-  entity_id   VARCHAR(40) NULL,
-  before_json JSON NULL,
-  after_json  JSON NULL,
-  detail      VARCHAR(1000) NULL,
-  PRIMARY KEY (id),
-  KEY ix_audit_entity (entity, entity_id, at),
-  KEY ix_audit_at (at),
-  KEY ix_audit_user (user_id, at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ---------------------------------------------------------------------
+-- ผู้สัมผัส เดิม DB_Contacts
+-- ตัด fy / indexHn ที่ซ้ำออก (join จาก tb_patients แทน ไม่ต้อง sync เองอีก)
+-- ---------------------------------------------------------------------
+CREATE TABLE tb_contacts (
+  id              VARCHAR(16) PRIMARY KEY,
+  patient_id      VARCHAR(16) NOT NULL,              -- index case
+  name            VARCHAR(150) NOT NULL,
+  cid             CHAR(13) NULL,
+  hn              VARCHAR(12) NULL,
+  sex             ENUM('ชาย','หญิง') NULL,
+  age             TINYINT UNSIGNED NULL,
+  relation        VARCHAR(50) NULL,
+  contact_type    ENUM('household','close') NOT NULL, -- คลินิกติดตามแค่ 2 กลุ่ม: ร่วมบ้าน / ใกล้ชิด
+  ring            TINYINT UNSIGNED NULL,             -- 1 / 2 / 3 (เก็บไว้ ยังไม่ตัด รอเจ้าของงานยืนยัน)
+  unit_id         SMALLINT UNSIGNED NOT NULL,        -- รพ.สต.รับผิดชอบ = ขอบเขตสิทธิ์ของผู้ใช้ unit
+  address         VARCHAR(200) NULL,                 -- ที่อยู่ตามทะเบียนบ้าน
+  current_address VARCHAR(200) NULL,                 -- ใหม่: ที่อยู่ปัจจุบัน (อยู่จริง ใช้ลงเยี่ยม)
+  phone           VARCHAR(30) NULL,                  -- ต้องแสดงในฟอร์ม/การ์ด/รายการ
+  tb_treat_place  VARCHAR(150) NULL,                 -- ใหม่: ถ้าป่วย TB รักษาที่ไหน (ใช้เมื่อไม่ได้ลงทะเบียนที่ รพ. เรา)
+  risk            VARCHAR(100) NULL,
+  -- A สอบสวน
+  invest_date     DATE NULL,
+  -- B คัดกรอง
+  screen_date     DATE NULL,
+  symptom         VARCHAR(40) NULL,
+  cxr_date        DATE NULL,
+  cxr_result      VARCHAR(40) NULL,
+  screen_result   VARCHAR(30) NULL,                  -- รอผล / ไม่ป่วย / ส่งตรวจเพิ่ม / ป่วยเป็นวัณโรค
+  new_patient_id  VARCHAR(16) NULL,                  -- ผู้สัมผัสที่ป่วย → ผู้ป่วยรายใหม่
+  -- C TPT
+  tpt_eligible    VARCHAR(10) NULL,
+  tpt_regimen     VARCHAR(20) NULL,
+  tpt_start       DATE NULL,
+  tpt_end         DATE NULL,
+  tpt_status      VARCHAR(40) NULL,
+  -- D ติดตาม 2 ปี (ร่วมบ้าน 6/12/18/24 ด., ใกล้ชิด 12/24 ด.)
+  fu6_date        DATE NULL,  fu6_result  VARCHAR(40) NULL,
+  fu12_date       DATE NULL,  fu12_result VARCHAR(40) NULL,
+  fu18_date       DATE NULL,  fu18_result VARCHAR(40) NULL,
+  fu24_date       DATE NULL,  fu24_result VARCHAR(40) NULL,
+  notes           TEXT NULL,
+  version         INT UNSIGNED NOT NULL DEFAULT 1,
+  created_by      INT UNSIGNED NULL,
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by      INT UNSIGNED NULL,
+  updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at      DATETIME NULL,
+  CONSTRAINT fk_con_patient FOREIGN KEY (patient_id)     REFERENCES tb_patients(id),
+  CONSTRAINT fk_con_newpat  FOREIGN KEY (new_patient_id) REFERENCES tb_patients(id),
+  CONSTRAINT fk_con_unit    FOREIGN KEY (unit_id)        REFERENCES tb_units(id),
+  CONSTRAINT fk_con_created FOREIGN KEY (created_by)     REFERENCES tb_users(id),
+  CONSTRAINT fk_con_updated FOREIGN KEY (updated_by)     REFERENCES tb_users(id),
+  CONSTRAINT chk_con_cid CHECK (cid IS NULL OR cid REGEXP '^[0-9]{13}$'),
+  KEY idx_con_patient (patient_id, deleted_at),
+  KEY idx_con_unit (unit_id, deleted_at),
+  KEY idx_con_cid (cid)
+) ENGINE=InnoDB;
 
--- ── ค่าตั้งระบบ (DB_Settings) — ห้ามเก็บ secret/token ที่นี่ ใช้ env ─────────────
-CREATE TABLE tb_settings (
-  k           VARCHAR(100) NOT NULL,
-  v           TEXT NULL,
+-- ---------------------------------------------------------------------
+-- ติดตามระหว่างรักษา (หมวด 4) สูงสุด 12 ช่องต่อผู้ป่วย
+-- 5 ช่องแรกเป็นค่าเริ่มต้น (เดือน 2 CXR, 2 AFB, 5 AFB, 6 CXR, 6 AFB) กด "+ เพิ่มเติม" ได้ถึง 12
+-- ---------------------------------------------------------------------
+CREATE TABLE tb_treatment_followups (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  patient_id  VARCHAR(16) NOT NULL,
+  slot        TINYINT UNSIGNED NOT NULL,             -- 1..12 ลำดับที่แสดงในฟอร์ม
+  month_no    TINYINT UNSIGNED NOT NULL,             -- เดือนที่ของการรักษา 0..24
+  test        ENUM('CXR','AFB','Xpert','culture','LFT','other') NOT NULL,
+  test_date   DATE NULL,
+  result      VARCHAR(100) NULL,                     -- NEG / Scanty / 1+ / normal / abnormal / ...
+  note        VARCHAR(300) NULL,
   updated_by  INT UNSIGNED NULL,
   updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (k),
-  CONSTRAINT fk_settings_updated_by FOREIGN KEY (updated_by) REFERENCES tb_users (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  CONSTRAINT fk_fu_patient FOREIGN KEY (patient_id) REFERENCES tb_patients(id),
+  CONSTRAINT fk_fu_updated FOREIGN KEY (updated_by) REFERENCES tb_users(id),
+  CONSTRAINT chk_fu_slot CHECK (slot BETWEEN 1 AND 12),
+  UNIQUE KEY uq_fu_slot (patient_id, slot),
+  KEY idx_fu_patient (patient_id, month_no)
+) ENGINE=InnoDB;
 
--- ── outbox สำหรับ sync MySQL → Google Sheet (ช้าได้แต่ชัวร์) ───────────────────
--- เก็บแค่ entity + id; worker ไปอ่านแถวล่าสุดจากตารางหลักเอง ไม่ใช้ payload ตอน enqueue
+-- ---------------------------------------------------------------------
+-- บันทึกการรักษา/ติดตามรายครั้ง เดิม DB_Visits (refId ขึ้นต้น P หรือ C)
+-- แยกเป็น FK สองช่อง ให้ DB บังคับความถูกต้องได้ ต้องมีอย่างใดอย่างหนึ่ง
+-- ---------------------------------------------------------------------
+CREATE TABLE tb_visits (
+  id          VARCHAR(16) PRIMARY KEY,
+  patient_id  VARCHAR(16) NULL,
+  contact_id  VARCHAR(16) NULL,
+  visit_date  DATE NOT NULL,
+  visit_type  VARCHAR(50) NOT NULL,                  -- DOT / เยี่ยมบ้าน / รับยา / ...
+  detail      TEXT NULL,
+  next_appt   DATE NULL,
+  lat         DECIMAL(9,6) NULL,                     -- ใหม่: พิกัด GPS ตอนบันทึกนอกพื้นที่
+  lng         DECIMAL(9,6) NULL,
+  client_uuid CHAR(36) NULL UNIQUE,                  -- ใหม่: กันบันทึกซ้ำเมื่อส่งร่างออฟไลน์ซ้ำ
+  created_by  INT UNSIGNED NOT NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by  INT UNSIGNED NULL,
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at  DATETIME NULL,
+  CONSTRAINT fk_vis_patient FOREIGN KEY (patient_id) REFERENCES tb_patients(id),
+  CONSTRAINT fk_vis_contact FOREIGN KEY (contact_id) REFERENCES tb_contacts(id),
+  CONSTRAINT fk_vis_created FOREIGN KEY (created_by) REFERENCES tb_users(id),
+  CONSTRAINT fk_vis_updated FOREIGN KEY (updated_by) REFERENCES tb_users(id),
+  CONSTRAINT chk_vis_ref CHECK ((patient_id IS NULL) <> (contact_id IS NULL)),
+  KEY idx_vis_patient (patient_id, visit_date),
+  KEY idx_vis_contact (contact_id, visit_date),
+  KEY idx_vis_appt (next_appt)                       -- สำหรับแจ้งเตือนนัด 07:00
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- ประวัติการแก้ไข เดิม DB_Log (เก็บ diff เป็น JSON แทนข้อความต่อกัน)
+-- ---------------------------------------------------------------------
+CREATE TABLE tb_audit_log (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  user_id     INT UNSIGNED NULL,                     -- NULL = ระบบ/ย้ายข้อมูล
+  action      VARCHAR(20) NOT NULL,                  -- login / add / save / delete / import / migrate / settings
+  entity      ENUM('patient','contact','visit','settings','user','system') NOT NULL,
+  entity_id   VARCHAR(16) NULL,
+  patient_id  VARCHAR(16) NULL,                      -- รวมประวัติของผู้ป่วยรายเดียวได้ query เดียว
+  changes     JSON NULL,                             -- {"field": ["เดิม","ใหม่"], ...}
+  ip          VARCHAR(45) NULL,
+  KEY idx_log_entity (entity, entity_id, at),
+  KEY idx_log_patient (patient_id, at),
+  KEY idx_log_user (user_id, at)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- ค่าตั้งเป้าหมาย เดิม DB_Settings (LINE token ย้ายไป env ห้ามเก็บใน DB)
+-- ---------------------------------------------------------------------
+CREATE TABLE tb_settings (
+  k           VARCHAR(50) PRIMARY KEY,               -- target_cases_2570, coverage_target, reminder_emails ...
+  v           VARCHAR(1000) NOT NULL DEFAULT '',
+  updated_by  INT UNSIGNED NULL,
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- เป้าหมายรายตัวชี้วัด ตั้งเองได้ แยกปีงบ + ไตรมาส (แทน key target_* ใน tb_settings)
+-- quarter: 0 = ทั้งปีงบ, 1 = ต.ค.–ธ.ค., 2 = ม.ค.–มี.ค., 3 = เม.ย.–มิ.ย., 4 = ก.ค.–ก.ย.
+-- ---------------------------------------------------------------------
+CREATE TABLE tb_targets (
+  fy          SMALLINT UNSIGNED NOT NULL,
+  quarter     TINYINT UNSIGNED NOT NULL,
+  indicator   VARCHAR(40) NOT NULL,                  -- case_finding / coverage / success_rate / death_rate / ...
+  target      DECIMAL(8,2) NOT NULL,                 -- ค่า B ในการแสดงผล A/B
+  unit        ENUM('cases','percent') NOT NULL,
+  updated_by  INT UNSIGNED NULL,
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (fy, quarter, indicator),
+  CONSTRAINT chk_tg_q CHECK (quarter BETWEEN 0 AND 4),
+  CONSTRAINT fk_tg_updated FOREIGN KEY (updated_by) REFERENCES tb_users(id)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Outbox: งานส่งข้อมูลไป Google Sheet (MySQL → Sheet ทางเดียว)
+-- INSERT ใน transaction เดียวกับการบันทึกข้อมูลเสมอ
+-- ---------------------------------------------------------------------
 CREATE TABLE tb_sheet_outbox (
-  id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  entity       ENUM('patient','contact','visit','followup') NOT NULL,
-  entity_id    VARCHAR(40) NOT NULL,
-  created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  attempts     SMALLINT UNSIGNED NOT NULL DEFAULT 0,
-  next_try_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  sent_at      DATETIME NULL,
-  last_error   VARCHAR(1000) NULL,
-  PRIMARY KEY (id),
-  KEY ix_outbox_pending (sent_at, next_try_at),
-  KEY ix_outbox_entity (entity, entity_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  entity      ENUM('patient','contact','visit','followup') NOT NULL,
+  entity_id   VARCHAR(16) NOT NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  sent_at     DATETIME NULL,
+  attempts    SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  next_try_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_error  VARCHAR(500) NULL,
+  KEY idx_outbox_pending (sent_at, next_try_at)
+) ENGINE=InnoDB;
 
--- tb_app ลบแถวได้เฉพาะ tb_settings (สิทธิ์ระดับตารางต้องให้หลังตารางมีอยู่แล้ว จึงอยู่ในไฟล์นี้
--- ไม่ใช่ใน db/init — บัญชี tb_migrate มี GRANT OPTION เฉพาะ ppc_tb.*)
-GRANT DELETE ON ppc_tb.tb_settings TO 'tb_app'@'%';
+-- ---------------------------------------------------------------------
+-- ข้อมูลตั้งต้น: หน่วยบริการ (ผู้ใช้สร้างผ่านหน้า admin พร้อม hash รหัสผ่าน)
+-- ---------------------------------------------------------------------
+INSERT INTO tb_units (name, role) VALUES
+  ('รพ.พลับพลาชัย', 'admin'),
+  ('รพ.สต.ตาพระ', 'unit'),
+  ('รพ.สต.ป่าชัน', 'unit'),
+  ('รพ.สต.จันดุม', 'unit'),
+  ('รพ.สต.โคกเจริญ', 'unit'),
+  ('รพ.สต.สำโรง', 'unit'),
+  ('รพ.สต.โคกขมิ้น', 'unit');
+

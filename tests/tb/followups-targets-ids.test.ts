@@ -3,16 +3,16 @@ import { test } from "node:test";
 import { DEFAULT_FOLLOWUP_SLOTS, MAX_FOLLOWUP_SLOTS } from "../../lib/tb/constants.ts";
 import { followupsForForm, legacyFollowupColumns, nextFreeSlot, validateFollowups } from "../../lib/tb/followups.ts";
 import { isEntityId, isValidCid, newEntityId } from "../../lib/tb/ids.ts";
-import { findTarget, targetProgress } from "../../lib/tb/targets.ts";
+import { findTarget, successRate, targetProgress, treatmentCoverage } from "../../lib/tb/targets.ts";
 
-const empty = (slot: number) => ({ slot, month_no: 3, test_type: "AFB", test_date: null, result: null });
+const empty = (slot: number) => ({ slot, month_no: 3, test: "AFB" as const, test_date: null, result: null, note: null });
 
 test("followupsForForm: 5 ช่องเริ่มต้นเสมอ + ช่องที่เพิ่ม เรียงตาม slot", () => {
-  const rows = followupsForForm([{ slot: 7, month_no: 8, test_type: "Culture", test_date: null, result: null },
-    { slot: 2, month_no: 2, test_type: "AFB", test_date: "2026-12-01", result: "NEG" }]);
+  const rows = followupsForForm([{ slot: 7, month_no: 8, test: "culture", test_date: null, result: null, note: null },
+    { slot: 2, month_no: 2, test: "AFB", test_date: "2026-12-01", result: "NEG", note: null }]);
   assert.deepEqual(rows.map((r) => r.slot), [1, 2, 3, 4, 5, 7]);
   assert.equal(rows[1].result, "NEG");
-  assert.deepEqual(rows.slice(0, 5).map((r) => `${r.month_no}${r.test_type}`), ["2CXR", "2AFB", "5AFB", "6CXR", "6AFB"]);
+  assert.deepEqual(rows.slice(0, 5).map((r) => `${r.month_no}${r.test}`), ["2CXR", "2AFB", "5AFB", "6CXR", "6AFB"]);
 });
 
 test("nextFreeSlot: ครบ 12 → null (ซ่อนปุ่ม + เพิ่มเติม)", () => {
@@ -26,7 +26,8 @@ test("validateFollowups", () => {
   assert.equal(validateFollowups(Array.from({ length: 13 }, (_, i) => empty(i + 1))).length > 0, true);
   assert.equal(validateFollowups([empty(0)]).length, 1);
   assert.equal(validateFollowups([empty(3), empty(3)]).length, 1);
-  assert.equal(validateFollowups([{ ...empty(6), month_no: 99 }]).length, 1);
+  assert.equal(validateFollowups([{ ...empty(6), month_no: 25 }]).length, 1);
+  assert.equal(validateFollowups([{ ...empty(6), test: "Sputum" as never }]).length, 1);
 });
 
 test("legacyFollowupColumns: slot 1–5 → หัวคอลัมน์เดิมของ DB_Patients", () => {
@@ -38,8 +39,8 @@ test("legacyFollowupColumns: slot 1–5 → หัวคอลัมน์เด
 
 test("findTarget: ไตรมาสไม่ตั้ง = null ไม่ fallback ไปเป้าทั้งปี", () => {
   const targets = [
-    { fy: 2570, quarter: 0 as const, indicator: "success_rate", target_value: "88.00" },
-    { fy: 2570, quarter: 1 as const, indicator: "new_cases", target_value: 12 },
+    { fy: 2570, quarter: 0 as const, indicator: "success_rate", target: "88.00", unit: "percent" as const },
+    { fy: 2570, quarter: 1 as const, indicator: "new_cases", target: 12, unit: "cases" as const },
   ];
   assert.equal(findTarget(targets, 2570, 0, "success_rate"), 88);
   assert.equal(findTarget(targets, 2570, 1, "success_rate"), null);
@@ -61,6 +62,22 @@ test("targetProgress: A/B + % + ยังไม่ตั้งเป้า (ห�
   assert.equal(over.barPct, 100);
   assert.equal(over.reached, true);
   assert.equal(targetProgress(0, 0).pct, null);
+});
+
+test("Treatment Coverage / Success Rate ตามแดชบอร์ดเดิม", () => {
+  const pts = [
+    { patient_type: "NEW", outcome: "หาย" },
+    { patient_type: "Relapse", outcome: "รักษาครบ" },
+    { patient_type: "Transfer in", outcome: "เสียชีวิต" },
+    { patient_type: "NEW", outcome: "กำลังรักษา" },
+  ];
+  assert.deepEqual(treatmentCoverage(pts, 6), { count: 3, pct: 50 });
+  assert.deepEqual(treatmentCoverage(pts, null), { count: 3, pct: null });
+  const sr = successRate(pts);
+  assert.equal(sr.success, 2);
+  assert.equal(sr.concluded, 3);
+  assert.ok(Math.abs(sr.pct! - 66.67) < 0.01);
+  assert.equal(successRate([{ outcome: "กำลังรักษา" }]).pct, null);
 });
 
 test("รหัสระบบ P/C/V + 10 hex และเลขบัตร 13 หลัก", () => {

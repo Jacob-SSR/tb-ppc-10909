@@ -76,7 +76,7 @@ export function todayBangkok(now: Date = new Date()): IsoDate {
 
 /**
  * แปลงค่าวันที่จากทุกแหล่ง (Sheet, Excel, ฟอร์ม) เป็น "YYYY-MM-DD" ค.ศ.
- * รับ: dd/mm/yyyy (พ.ศ. หรือ ค.ศ.), yyyy-mm-dd (มีเวลาต่อท้ายได้, ปี พ.ศ. ได้),
+ * รับ: dd/mm/yyyy หรือ dd/mm/yy (พ.ศ. หรือ ค.ศ.), mm/dd/yyyy, yyyy-mm-dd (มีเวลาต่อท้ายได้, ปี พ.ศ. ได้),
  *      ISO ที่มี timezone (เช่น จาก Apps Script) → ใช้วันที่ตามเวลาไทย,
  *      Excel serial (ตัวเลข), Date
  * คืน null ถ้าว่างหรืออ่านไม่ออก — ผู้เรียกตัดสินเองว่าจะปฏิเสธแถวหรือเก็บ NULL
@@ -85,7 +85,10 @@ export function toIso(v: unknown): IsoDate | null {
   if (v === null || v === undefined) return null;
 
   if (v instanceof Date) {
-    return Number.isNaN(v.getTime()) ? null : bangkokDate(v);
+    if (Number.isNaN(v.getTime())) return null;
+    // Excel บางไฟล์เก็บปี พ.ศ. ในเซลล์วันที่ (เช่น 2569) → แปลงเป็น ค.ศ.
+    const [y, m, d] = parts(bangkokDate(v));
+    return makeIso(ceYear(y), m, d);
   }
 
   if (typeof v === "number") return fromExcelSerial(v);
@@ -97,8 +100,16 @@ export function toIso(v: unknown): IsoDate | null {
   // Excel serial ที่มาเป็นสตริง (เช่น "45567") — 5 หลักเท่านั้น กันสับสนกับปี 4 หลัก
   if (/^\d{5}(\.\d+)?$/.test(s)) return fromExcelSerial(Number(s));
 
-  const dmy = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(s);
-  if (dmy) return makeIso(ceYear(Number(dmy[3])), Number(dmy[2]), Number(dmy[1]));
+  // dd/mm/yyyy, dd/mm/yy (ปี 2 หลัก = พ.ศ. 25xx) และ mm/dd/yyyy (สลับเมื่อช่องที่ 2 > 12)
+  const dmy = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/.exec(s);
+  if (dmy) {
+    let d = Number(dmy[1]);
+    let m = Number(dmy[2]);
+    let y = Number(dmy[3]);
+    if (y < 100) y += 2500;
+    if (m > 12 && d <= 12) [d, m] = [m, d];
+    return makeIso(ceYear(y), m, d);
+  }
 
   // ISO ที่ระบุ timezone ชัด = instant จริง → แปลงเป็นวันที่ไทย
   // (Apps Script ส่ง 2026-03-01T17:00:00.000Z ซึ่งคือ 2 มี.ค. เวลาไทย)
@@ -117,8 +128,9 @@ function ceYear(y: number): number {
   return y > 2400 ? y - BE_OFFSET : y;
 }
 
+// รับเฉพาะช่วง ค.ศ. ~1954–2119 (ตามระบบเดิม) กันตัวเลขอื่น เช่น ปี/อายุ ถูกอ่านเป็นวันที่
 function fromExcelSerial(n: number): IsoDate | null {
-  if (!Number.isFinite(n) || n < 1 || n > 2_958_465) return null;
+  if (!Number.isFinite(n) || n <= 20_000 || n >= 80_000) return null;
   return fromUtcMs(EXCEL_EPOCH_MS + Math.floor(n) * DAY_MS);
 }
 

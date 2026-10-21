@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { TB_RESULT } from "../../lib/tb/constants.ts";
-import { contactTasks, patientTasks, regimenMonths, taskStatus, tptMonths } from "../../lib/tb/tasks.ts";
+import { contactTasks, patientStart, patientTasks, screened, taskStatus, tptMonths } from "../../lib/tb/tasks.ts";
 import { contact } from "./fixtures.ts";
 
 const START = "2026-10-01"; // ผู้ป่วย index เริ่มยา
-const keys = (ts: { key: string }[]) => ts.map((t) => t.key);
+const steps = (ts: { step: string }[]) => ts.map((t) => t.step);
 
 test("taskStatus", () => {
   assert.equal(taskStatus(null, "2026-10-21"), "unscheduled");
@@ -15,119 +15,109 @@ test("taskStatus", () => {
   assert.equal(taskStatus("2026-10-29", "2026-10-21"), "upcoming");
 });
 
-test("ผู้สัมผัสใหม่: A ภายใน 7 วัน, B ภายใน 14 วัน, D นัดแรก", () => {
-  const ts = contactTasks(contact(), { indexStartDate: START, today: "2026-10-05" });
-  assert.deepEqual(keys(ts), ["A", "B", "D:6"]);
-  assert.equal(ts[0].due, "2026-10-08");
-  assert.equal(ts[1].due, "2026-10-15");
-  assert.equal(ts[2].due, "2027-04-01");
-  assert.equal(ts[0].status, "due_soon");
+test("patientStart: วันเริ่มยา ไม่มีใช้วันวินิจฉัย", () => {
+  assert.equal(patientStart({ start_date: "2026-10-01", diag_date: "2026-09-20" }), "2026-10-01");
+  assert.equal(patientStart({ start_date: null, diag_date: "2026-09-20" }), "2026-09-20");
+  assert.equal(patientStart({ start_date: null, diag_date: null }), null);
+  assert.equal(patientStart(undefined), null);
 });
 
-test("A/B เลยกำหนด → overdue", () => {
-  const ts = contactTasks(contact(), { indexStartDate: START, today: "2026-10-21" });
-  assert.equal(ts.find((t) => t.key === "A")!.status, "overdue");
-  assert.equal(ts.find((t) => t.key === "B")!.status, "overdue");
+test("A: ยังไม่สอบสวน → งานเดียว กำหนด 7 วันหลังผู้ป่วยเริ่มยา", () => {
+  const ts = contactTasks(contact(), { indexStart: START, today: "2026-10-05" });
+  assert.deepEqual(ts, [{ step: "A", what: "สอบสวนผู้สัมผัส", due: "2026-10-08", status: "due_soon" }]);
+  // ไม่รู้วันเริ่มยาของ index → ไม่มีกำหนด
+  assert.equal(contactTasks(contact(), { indexStart: null, today: "2026-10-05" })[0].status, "unscheduled");
 });
 
-test("ไม่รู้วันเริ่มยาของ index → unscheduled", () => {
-  const ts = contactTasks(contact(), { indexStartDate: null, today: "2026-10-21" });
-  assert.ok(ts.every((t) => t.status === "unscheduled" && t.due === null));
+test("B: กำหนด 14 วันหลังวันสอบสวน, รอผล/ส่งตรวจเพิ่ม = ยังไม่จบ", () => {
+  const ctx = { indexStart: START, today: "2026-10-21" };
+  const c = contact({ invest_date: "2026-10-05" });
+  assert.deepEqual(contactTasks(c, ctx), [{ step: "B", what: "คัดกรอง ซักอาการ + CXR", due: "2026-10-19", status: "overdue" }]);
+  assert.equal(contactTasks({ ...c, screen_result: "รอผล" }, ctx)[0].what, "คัดกรอง ซักอาการ + CXR");
+  assert.equal(contactTasks({ ...c, screen_result: "ส่งตรวจเพิ่ม" }, ctx)[0].what, "รอผลตรวจเพิ่ม");
 });
 
-test("คัดกรองแล้วเข้าเกณฑ์ TPT ยังไม่เริ่ม → C:start", () => {
-  const c = contact({ investigate_date: "2026-10-03", screen_date: "2026-10-05", tpt_eligible: 1 });
-  assert.deepEqual(keys(contactTasks(c, { indexStartDate: START, today: "2026-10-21" })), ["C:start", "D:6"]);
-  // ไม่เข้าเกณฑ์ → ไม่มี C
-  const no = contact({ investigate_date: "2026-10-03", screen_date: "2026-10-05", tpt_eligible: 0 });
-  assert.deepEqual(keys(contactTasks(no, { indexStartDate: START, today: "2026-10-21" })), ["D:6"]);
+test("C: เข้าเกณฑ์ยังไม่เริ่ม → เริ่ม TPT ภายใน 14 วันหลังคัดกรอง", () => {
+  const c = contact({ invest_date: "2026-10-03", screen_date: "2026-10-05", screen_result: "ไม่ป่วย", tpt_eligible: "ใช่" });
+  const ts = contactTasks(c, { indexStart: START, today: "2026-10-21" });
+  assert.deepEqual(steps(ts), ["C", "D"]);
+  assert.equal(ts[0].what, "เริ่ม TPT");
+  assert.equal(ts[0].due, "2026-10-19");
+  // ไม่ใช่ / ปฏิเสธ → ไม่มี C
+  for (const v of ["ไม่ใช่", "ปฏิเสธ"]) {
+    assert.deepEqual(steps(contactTasks({ ...c, tpt_eligible: v }, { indexStart: START, today: "2026-10-21" })), ["D"]);
+  }
 });
 
-test("TPT นัดรายเดือนตามสูตร แล้วสรุปผล", () => {
+test("C: นัด TPT รายเดือน = เดือนแรกที่ยังไม่ผ่าน แล้วให้บันทึกสถานะเมื่อครบสูตร", () => {
   const c = contact({
-    investigate_date: "2026-10-03", screen_date: "2026-10-05", tpt_eligible: 1,
-    tpt_regimen: "3HP", tpt_start_date: "2026-10-10",
+    invest_date: "2026-10-03", screen_date: "2026-10-05", screen_result: "ไม่ป่วย",
+    tpt_eligible: "ใช่", tpt_regimen: "3HP", tpt_start: "2026-10-10", tpt_status: "กำลังกิน",
   });
-  const ctx = { indexStartDate: START, today: "2026-10-21" };
-  let c1 = contactTasks(c, ctx).find((t) => t.step === "C")!;
-  assert.equal(c1.key, "C:tpt-1");
-  assert.equal(c1.label, "นัด TPT เดือนที่ 1/3");
-  assert.equal(c1.due, "2026-11-10");
-
-  c1 = contactTasks(c, { ...ctx, tptVisitDates: ["2026-10-10", "2026-11-10"] }).find((t) => t.step === "C")!;
-  assert.equal(c1.key, "C:tpt-2"); // visit วันเริ่มยาไม่นับ
-  assert.equal(c1.due, "2026-12-10");
-
-  c1 = contactTasks(c, { ...ctx, tptVisitDates: ["2026-11-10", "2026-12-10", "2027-01-10"] }).find((t) => t.step === "C")!;
-  assert.equal(c1.key, "C:end");
-
-  // กินครบ / มีวันสิ้นสุด → ไม่มี C
-  assert.equal(contactTasks({ ...c, tpt_status: "กินครบ" }, ctx).some((t) => t.step === "C"), false);
-  assert.equal(contactTasks({ ...c, tpt_end_date: "2027-01-10" }, ctx).some((t) => t.step === "C"), false);
-  // ไม่รู้สูตร
-  assert.equal(contactTasks({ ...c, tpt_regimen: null }, ctx).find((t) => t.step === "C")!.key, "C:regimen");
+  const cOf = (today: string) => contactTasks(c, { indexStart: START, today }).find((t) => t.step === "C")!;
+  assert.deepEqual([cOf("2026-10-21").what, cOf("2026-10-21").due], ["นัด TPT รายเดือน", "2026-11-10"]);
+  assert.equal(cOf("2026-11-10").due, "2026-11-10");
+  assert.equal(cOf("2026-11-11").due, "2026-12-10");
+  assert.deepEqual([cOf("2027-01-11").what, cOf("2027-01-11").due], ["ครบระยะ TPT – บันทึกสถานะ", "2027-01-10"]);
+  // สถานะว่างถือว่ากำลังกิน, สถานะอื่น = จบแล้ว
+  assert.ok(contactTasks({ ...c, tpt_status: null }, { indexStart: START, today: "2026-10-21" }).some((t) => t.step === "C"));
+  for (const s of ["กินครบ", "หยุดเพราะผลข้างเคียง", "ขาดยา/ปฏิเสธ"]) {
+    assert.ok(!contactTasks({ ...c, tpt_status: s }, { indexStart: START, today: "2026-10-21" }).some((t) => t.step === "C"), s);
+  }
 });
 
-test("D: ร่วมบ้าน 6/12/18/24, ใกล้ชิด 12/24 — โชว์นัดถัดไป + ที่เลยกำหนด", () => {
-  const base = { investigate_date: "2026-10-03", screen_date: "2026-10-05" };
-  const ctx = { indexStartDate: START, today: "2027-10-15" };
-  // ร่วมบ้าน ยังไม่ติดตามเลย: 6 และ 12 เดือนเลยแล้ว → โชว์ทั้งสอง ไม่โชว์ 18/24
-  assert.deepEqual(keys(contactTasks(contact(base), ctx)), ["D:6", "D:12"]);
-  // ติดตาม 6 แล้ว
-  assert.deepEqual(keys(contactTasks(contact({ ...base, fu6_date: "2027-04-01" }), ctx)), ["D:12"]);
-  // ใกล้ชิดไม่มีนัด 6 เดือน
-  assert.deepEqual(keys(contactTasks(contact({ ...base, contact_type: "close" }), ctx)), ["D:12"]);
-  // ครบหมด
+test("D: นับจากวันคัดกรอง เฉพาะผล 'ไม่ป่วย' แสดงนัดถัดไปนัดเดียว", () => {
+  const base = { invest_date: "2026-10-03", screen_date: "2026-10-05", screen_result: "ไม่ป่วย" };
+  const ctx = { indexStart: START, today: "2026-10-21" };
+  assert.deepEqual(contactTasks(contact(base), ctx), [
+    { step: "D", what: "ติดตาม 6 เดือน (ซักอาการ + CXR)", due: "2027-04-05", status: "upcoming" },
+  ]);
+  assert.equal(contactTasks(contact({ ...base, fu6_date: "2027-04-05" }), ctx)[0].due, "2027-10-05");
+  // ใกล้ชิด: 12/24 เดือน
+  assert.equal(contactTasks(contact({ ...base, contact_type: "close" }), ctx)[0].what, "ติดตาม 12 เดือน (ซักอาการ + CXR)");
+  // ไม่มีวันคัดกรอง → ใช้วัน CXR แล้ววันสอบสวน
+  assert.equal(contactTasks(contact({ ...base, screen_date: null, cxr_date: "2026-10-04" }), ctx)[0].due, "2027-04-04");
+  // ครบ 2 ปี
   const done = contact({ ...base, fu6_date: "x", fu12_date: "x", fu18_date: "x", fu24_date: "x" });
-  assert.deepEqual(keys(contactTasks(done, ctx)), []);
+  assert.deepEqual(contactTasks(done, ctx), []);
 });
 
-test("ผู้สัมผัสป่วย TB: เหลืองานเดียวคือระบุที่รักษา", () => {
-  const ctx = { indexStartDate: START, today: "2026-10-21" };
-  assert.deepEqual(keys(contactTasks(contact({ screen_date: "2026-10-05", screen_result: TB_RESULT }), ctx)), ["TB"]);
-  assert.deepEqual(contactTasks(contact({ screen_result: TB_RESULT, tb_treat_place: "รพ.บุรีรัมย์" }), ctx), []);
+test("ผู้สัมผัสป่วย TB → ไม่มีงาน; screened()", () => {
+  const ctx = { indexStart: START, today: "2026-10-21" };
+  assert.deepEqual(contactTasks(contact({ invest_date: "2026-10-03", screen_result: TB_RESULT }), ctx), []);
   assert.deepEqual(contactTasks(contact({ new_patient_id: "P00000000ab" }), ctx), []);
+  assert.equal(screened(contact({ screen_result: "ไม่ป่วย" })), true);
+  assert.equal(screened(contact({ screen_result: TB_RESULT })), true);
+  assert.equal(screened(contact({ screen_result: "รอผล" })), false);
 });
 
-test("tptMonths / regimenMonths", () => {
-  assert.equal(tptMonths("3HP"), 3);
-  assert.equal(tptMonths("1HP"), 1);
-  assert.equal(tptMonths("6Lfx"), 6);
-  assert.equal(tptMonths("12H"), 12);
-  assert.equal(tptMonths(""), null);
-  assert.equal(tptMonths("HP"), null);
-
-  assert.equal(regimenMonths("2IRZE + 4IR"), 6);
-  assert.equal(regimenMonths("2IRZE + 7IR"), 9);
-  assert.equal(regimenMonths("2IRZE/10IR"), 12);
-  assert.equal(regimenMonths("3IRZE/4IR"), 7);
-  assert.equal(regimenMonths("2IRZE/4-7IR"), 9);
-  assert.equal(regimenMonths("9HZE"), 9);
-  assert.equal(regimenMonths("12IEL, 2IRZE + 4IR"), 6);
-  assert.equal(regimenMonths("ELS, HRE, 2IRZE + 4IR"), 6);
-  assert.equal(regimenMonths(null), 6);
-  assert.equal(regimenMonths("ELS"), 6);
+test("tptMonths ตามสูตรเดิม ไม่รู้จัก = 3 เดือน", () => {
+  assert.deepEqual(["3HP", "1HP", "3HR", "4R", "6H"].map(tptMonths), [3, 1, 3, 4, 6]);
+  assert.equal(tptMonths("9H"), 9);
+  assert.equal(tptMonths("อื่นๆ"), 3);
+  assert.equal(tptMonths(null), 3);
 });
 
-test("patientTasks: ยังไม่มีผู้สัมผัส, AFB 2/5/6, สรุปผล", () => {
-  const p = { start_date: START, regimen: "2IRZE + 4IR", outcome: "กำลังรักษา" };
-  const ts = patientTasks(p, { contactCount: 0, followups: [], today: "2026-10-21" });
-  assert.deepEqual(keys(ts), ["P:no-contacts", "P:afb-2", "P:afb-5", "P:afb-6", "P:conclude"]);
-  assert.equal(ts[0].due, "2026-10-08");
-  assert.equal(ts[0].status, "overdue");
-  assert.equal(ts[1].due, "2026-12-01");
-  assert.equal(ts[4].due, "2027-04-01");
-
-  const fu = [
-    { month_no: 2, test_type: "AFB", test_date: "2026-12-01", result: "NEG" },
-    { month_no: 2, test_type: "CXR", test_date: "2026-12-01", result: "abnormal" },
-    { month_no: 5, test_type: "afb", test_date: null, result: null }, // ช่องว่าง ยังไม่ถือว่าทำ
-  ];
-  assert.deepEqual(keys(patientTasks(p, { contactCount: 3, followups: fu, today: "2026-10-21" })), ["P:afb-5", "P:afb-6", "P:conclude"]);
+test("patientTasks: ยังไม่มีผู้สัมผัส + AFB 2 → 5 → 6 → สรุปผล ทีละรายการ", () => {
+  const p = { start_date: START, diag_date: null, outcome: "กำลังรักษา" };
+  const today = "2026-10-21";
+  let ts = patientTasks(p, { contactCount: 0, followups: [], today });
+  assert.deepEqual(ts, [
+    { step: "A", what: "ระบุ/สอบสวนผู้สัมผัส", due: "2026-10-08", status: "overdue" },
+    { step: "4", what: "AFB เดือน 2", due: "2026-12-01", status: "upcoming" },
+  ]);
+  const afb = (m: number, result: string | null) => ({ month_no: m, test: "AFB" as const, result });
+  ts = patientTasks(p, { contactCount: 2, followups: [afb(2, "NEG"), { month_no: 2, test: "CXR", result: "abnormal" }], today });
+  assert.deepEqual(ts.map((t) => t.what), ["AFB เดือน 5"]);
+  ts = patientTasks(p, { contactCount: 2, followups: [afb(2, "NEG"), afb(5, " "), afb(6, null)], today });
+  assert.deepEqual(ts.map((t) => t.what), ["AFB เดือน 5"]); // ช่องว่าง = ยังไม่ได้ผล
+  ts = patientTasks(p, { contactCount: 2, followups: [afb(2, "NEG"), afb(5, "NEG"), afb(6, "NEG")], today });
+  assert.deepEqual(ts, [{ step: "5", what: "สรุปผลการรักษา", due: "2027-04-01", status: "upcoming" }]);
 });
 
-test("patientTasks: สรุปผลแล้วไม่มีงาน, outcome ว่าง = ยังรักษา", () => {
+test("patientTasks: สรุปผลแล้ว หรือไม่มีวันเริ่มยา/วินิจฉัย → ไม่มีงาน", () => {
   const ctx = { contactCount: 0, followups: [], today: "2026-10-21" };
-  assert.deepEqual(patientTasks({ start_date: START, regimen: null, outcome: "รักษาครบ" }, ctx), []);
-  assert.ok(patientTasks({ start_date: START, regimen: null, outcome: null }, ctx).length > 0);
+  assert.deepEqual(patientTasks({ start_date: START, diag_date: null, outcome: "รักษาครบ" }, ctx), []);
+  assert.deepEqual(patientTasks({ start_date: null, diag_date: null, outcome: "กำลังรักษา" }, ctx), []);
+  assert.equal(patientTasks({ start_date: null, diag_date: START, outcome: "กำลังรักษา" }, ctx)[0].due, "2026-10-08");
 });

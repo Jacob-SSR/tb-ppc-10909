@@ -3,7 +3,7 @@
 # tb-ppc-10909 — ระบบทะเบียนวัณโรคและผู้สัมผัส รพ.พลับพลาชัย
 
 > **โปรเจกต์ใหม่** แยกจาก ppc-hos ทั้งหมด (repo, deploy, DB ของตัวเอง)
-> Schema: `db/migrations/001_init.sql` (เขียนจาก §4 + หัวคอลัมน์จริงของ Sheet เพราะไม่มีไฟล์ `docs/ppc_tb_schema.sql` ใน repo)
+> ไฟล์คู่กัน: `docs/ppc_tb_schema.sql` (schema MySQL ฉบับเต็ม = `db/migrations/001_init.sql`)
 > สถานะ: **Phase 1 เสร็จ** (scaffold, docker-compose, schema + migration, `lib/db.ts`, `lib/tb/*` + test) ทำตามลำดับ Phase ใน §10 ถามก่อนถ้าเจอข้อที่อยู่ใน §11 "ยังต้องยืนยัน"
 
 ## 0. แหล่งอ้างอิง (อ่านอย่างเดียว ห้ามแก้)
@@ -12,7 +12,7 @@
 |---|---|
 | `ppc-hos-10667` | ดู SQL ที่ query **ตาราง HOSxP จริง** (ชื่อตาราง/คอลัมน์, join, charset `tis620`), pattern การต่อ DB, Redis cache, leader election (`lib/cacheWarmer.ts`), Google Sheets client (`lib/sheets/client.ts`) |
 | `rca` | ดู SQL ตาราง HOSxP จริงเพิ่มเติม |
-| Apps Script เดิม `Code.gs` + `Index.html` | business logic, รายการตัวเลือก (`L`), ฟอร์ม (`P_FORM`/`C_FORM`), ฟิลด์ (`P_FIELDS`/`C_FIELDS`/`V_FIELDS`) |
+| Apps Script เดิม `Code.gs` + `Index.html` | business logic, รายการตัวเลือก (`L`), ฟอร์ม (`P_FORM`/`C_FORM`), ฟิลด์ (`P_FIELDS`/`C_FIELDS`/`V_FIELDS`) — ย้ายมาแล้ว: logic → `lib/tb/*`, `L` → `lib/tb/options.ts`, ฟิลด์/หัวคอลัมน์ → `lib/tb/sheetColumns.ts`, กติกาสิทธิ์ → §5.1 (ไม่เก็บซอร์สเดิมใน repo เพราะมี PIN ใน `DEFAULT_UNITS`) |
 
 ห้าม copy ข้อมูลผู้ป่วย, ไฟล์ Excel, `.env` หรือ PIN จากแหล่งเหล่านี้เข้า repo ใหม่
 
@@ -48,7 +48,7 @@
 5. Repo ใหม่ควรเป็น **private**; `.gitignore` ต้องมี `.env*`, `*.xlsx`, `*.csv`, `backups/`
 6. ทุกการเพิ่ม/แก้/ลบ เขียน `tb_audit_log` (ใคร เมื่อไร IP อะไร เปลี่ยนจากอะไรเป็นอะไร)
 
-## 4. Data model (สรุป — ฉบับเต็มใน `db/migrations/001_init.sql`)
+## 4. Data model (สรุป — ฉบับเต็มใน schema)
 
 - `tb_units` หน่วยบริการ 7 แห่ง (`admin` = รพ.พลับพลาชัย, `unit` = รพ.สต.)
 - `tb_users` ผู้ใช้รายคน ผูกหน่วย
@@ -72,7 +72,7 @@ DB pools ใน `lib/db.ts`:
 - **ไม่เปิด `ports:`** ออก LAN; แอปต่อผ่านชื่อ service `mysql:3306` ใน network ของ compose
 - จำกัดหน่วยความจำ (`--innodb-buffer-pool-size=256M` + `mem_limit`) เพื่อไม่แย่ง RAM กับ ppc-hos บนเครื่องเดียวกัน
 - `docker-entrypoint-initdb.d/` ใช้**เฉพาะสร้างบัญชี** `tb_app` (สคริปต์ `.sh` อ่านรหัสจาก env) สิทธิ์ `SELECT, INSERT, UPDATE` บน `ppc_tb.*` + `DELETE` บน `tb_settings` — ห้ามใช้ `MYSQL_USER`/`MYSQL_PASSWORD` (ได้สิทธิ์ ALL)
-- Schema สร้างด้วย **migration** ตั้งแต่วันแรก: `db/migrations/001_init.sql`, ไฟล์ถัดไปเรียงเลข, ตาราง `schema_migrations` จำว่ารันอะไรแล้ว, รันด้วย `npm run migrate` ด้วยบัญชี migrate แยก (มีสิทธิ์ DDL) — ไม่แก้ไฟล์ migration ที่รันไปแล้ว
+- Schema สร้างด้วย **migration** ตั้งแต่วันแรก: `db/migrations/001_init.sql` (= `ppc_tb_schema.sql` ตัดส่วน CREATE USER ท้ายไฟล์ออก; GRANT DELETE ของ `tb_app` อยู่ใน `002_app_grants.sql`), ไฟล์ถัดไปเรียงเลข, ตาราง `schema_migrations` จำว่ารันอะไรแล้ว, รันด้วย `npm run migrate` ด้วยบัญชี migrate แยก (มีสิทธิ์ DDL) — ไม่แก้ไฟล์ migration ที่รันไปแล้ว
 - Backup: service/cron รัน `mysqldump --single-transaction` ทุกคืน → บีบอัด → ส่งออกนอกเครื่อง .58, เก็บย้อนหลัง ≥ 30 วัน, มีขั้นตอน restore ที่ทดสอบแล้วใน README
 
 ## 5. Business logic ที่ต้องคงไว้จากระบบเดิม
@@ -88,6 +88,18 @@ DB pools ใน `lib/db.ts`:
 - แจ้งเตือนนัดทุกเช้า 07:00 (อีเมล + LINE OA broadcast) — LINE token อยู่ใน env ไม่ใช่ DB
 - นำเข้า/ส่งออก Excel (admin เท่านั้น) ผ่าน validation และ audit log เหมือนการคีย์ปกติ
 - แสดงวันที่เป็น พ.ศ., เก็บเป็น ค.ศ. (`DATE`)
+
+### 5.1 กติกาจาก Code.gs ที่ API (Phase 3) ต้องคงไว้
+
+- **admin เท่านั้น**: เพิ่ม/แก้/ลบผู้ป่วย, แปลงผู้สัมผัสเป็นผู้ป่วย, ลบผู้สัมผัส/บันทึก visit, นำเข้า Excel, ตั้งเป้าหมาย/ค่าตั้ง
+- **user `unit`**: เพิ่ม/แก้ผู้สัมผัสได้เฉพาะ `unit_id` ของหน่วยตัวเอง (ไม่ระบุ = หน่วยตัวเอง, ระบุเป็นหน่วยอื่นไม่ได้); บันทึก visit ได้เฉพาะผู้สัมผัสในเขต (ของผู้ป่วยไม่ได้); แก้ visit ได้เฉพาะที่หน่วยตัวเองบันทึก
+- ลบผู้ป่วยไม่ได้ถ้ายังมีผู้สัมผัส ("กรุณาลบผู้สัมผัสก่อน"); แปลงผู้สัมผัสซ้ำไม่ได้ ("ลงทะเบียนเป็นผู้ป่วยแล้ว")
+- บันทึกผู้ป่วย: `fy` คำนวณจากวันเริ่มยา (ไม่มีใช้วันวินิจฉัย); ต้องมีชื่อ และวันเริ่มยาหรือวันวินิจฉัย
+- visit: ต้องมีวันที่ + รายละเอียด, วันนัดต้องหลังวันที่บันทึก; นัดค้าง = `next_appt` ของบันทึกล่าสุด (`lib/tb/appointments.ts`), ไม่แสดงนัดของผู้ป่วยที่สรุปผลแล้ว
+- ประวัติการแก้ไข: user `unit` เห็นประวัติของผู้สัมผัสเฉพาะรายการที่หน่วยตัวเองทำ (+ `migrate`), เก็บรายการช่องที่เปลี่ยน "เดิม → ใหม่"
+- นำเข้า Excel: แม็ปตามหัวคอลัมน์ไทย; จับคู่ผู้ป่วยด้วย id หรือ (ปีงบ + HN), ผู้สัมผัสด้วย id หรือ (ผู้ป่วย index + ชื่อ) โดยหาผู้ป่วย index จาก id หรือ (HN index + ปีงบ); **ช่องว่างในไฟล์ไม่ลบค่าเดิม**; รายงาน เพิ่ม/อัปเดต/ข้าม + เหตุผลรายแถว
+- แจ้งเตือน 07:00: กลุ่ม ขาดนัด / วันนี้ / พรุ่งนี้; LINE broadcast แสดงไม่เกิน 15 รายต่อกลุ่ม ข้อความ ≤ 4,900 ตัวอักษร; อีเมลถึง `reminder_emails` ใน `tb_settings`; ไม่มีนัดเลย = ไม่ส่ง
+- ตัวชี้วัดเดิมบน dashboard (`lib/tb/targets.ts`): Treatment Coverage = (NEW + Relapse) ÷ เป้าจำนวนผู้ป่วยของจังหวัด (`target_cases_<ปีงบ>`), Success Rate = (หาย + รักษาครบ) ÷ ผู้ที่สรุปผลแล้ว (ทั้งปีงบ ไม่ใช่ cohort), เป้า default 88%
 
 ## 6. ความต้องการใหม่จากเจ้าของงาน
 

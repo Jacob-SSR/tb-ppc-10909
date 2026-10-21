@@ -57,6 +57,8 @@ test("toIso: dd/mm/yyyy พ.ศ. และ ค.ศ.", () => {
   assert.equal(toIso("19/04/2026"), "2026-04-19");
   assert.equal(toIso("19-04-2569"), "2026-04-19");
   assert.equal(toIso(" 29/02/2567 "), "2024-02-29");
+  assert.equal(toIso("22/10/68"), "2025-10-22"); // ปี 2 หลัก = พ.ศ.
+  assert.equal(toIso("10/28/2569"), "2026-10-28"); // mm/dd/yyyy สลับให้
 });
 
 test("toIso: ISO / ISO มีเวลา / ปี พ.ศ.", () => {
@@ -74,10 +76,11 @@ test("toIso: Excel serial และ Date", () => {
   assert.equal(toIso("45658"), "2025-01-01");
   assert.equal(toIso(45658.75), "2025-01-01");
   assert.equal(toIso(new Date("2026-10-20T17:30:00Z")), "2026-10-21");
+  assert.equal(toIso(new Date("2569-04-19T05:00:00Z")), "2026-04-19"); // เซลล์วันที่ที่ใส่ปี พ.ศ.
 });
 
 test("toIso: ค่าว่างหรือวันที่ไม่จริง → null", () => {
-  for (const v of [null, undefined, "", "  ", "-", "abc", "31/02/2569", "2026-13-01", "00/01/2569", 0, -5, NaN, {}, new Date("x")]) {
+  for (const v of [null, undefined, "", "  ", "-", "abc", "31/02/2569", "2026-13-01", "00/01/2569", "13/13/2569", 0, -5, 2569, 19999, NaN, {}, new Date("x")]) {
     assert.equal(toIso(v), null, String(v));
   }
 });

@@ -53,16 +53,20 @@ test("tbTreatPlace: ลงทะเบียนในระบบใช้ reg_p
   assert.deepEqual(tbTreatPlace(contact()), { place: null, patientId: null });
 });
 
-test("patientDraftFromContact ใช้ที่อยู่ปัจจุบันก่อน", () => {
-  const d = patientDraftFromContact(
-    contact({ full_name: "ก ข", address: "ทะเบียน", current_address: "ปัจจุบัน", unit_id: 3, screen_date: "2026-10-21", tb_treat_place: "รพ.พลับพลาชัย" }),
-    { id: "P00000000ff", today: "2026-11-01" },
+test("patientDraftFromContact ตาม convertContactToPatient เดิม", () => {
+  const { patient, contactUpdate } = patientDraftFromContact(
+    contact({ name: "ก ข", hn: "1", address: "ทะเบียน", current_address: "ปัจจุบัน", unit_id: 3, screen_date: "2026-09-21" }),
+    { id: "P00000000ff", startDate: "2026-10-02", indexHn: "460000001", today: "2026-10-21" },
   );
-  assert.equal(d.id, "P00000000ff");
-  assert.equal(d.address, "ปัจจุบัน");
-  assert.equal(d.fy, 2570);
-  assert.equal(d.unit_id, 3);
-  assert.equal(d.patient_type, "NEW");
-  assert.equal(d.reg_place, "รพ.พลับพลาชัย");
-  assert.equal(patientDraftFromContact(contact({ address: "ทะเบียน" }), { id: "P00000000ff", today: "2026-09-01" }).address, "ทะเบียน");
+  assert.equal(patient.fy, 2570); // จากวันเริ่มยา
+  assert.equal(patient.diag_date, "2026-09-21");
+  assert.equal(patient.address, "ปัจจุบัน");
+  assert.equal(patient.reg_place, "รพ.พลับพลาชัย");
+  assert.equal(patient.outcome, "กำลังรักษา");
+  assert.equal(patient.notes, "พบจากการคัดกรองผู้สัมผัสของ HN 460000001");
+  assert.deepEqual(contactUpdate, { new_patient_id: "P00000000ff", screen_result: TB_RESULT });
+  // ไม่มีวันเริ่มยา → ปีงบจากวันคัดกรอง
+  const d2 = patientDraftFromContact(contact({ address: "ทะเบียน", screen_date: "2026-09-21" }), { id: "P00000000ff", startDate: null, indexHn: null, today: "2026-10-21" });
+  assert.equal(d2.patient.fy, 2569);
+  assert.equal(d2.patient.address, "ทะเบียน");
 });

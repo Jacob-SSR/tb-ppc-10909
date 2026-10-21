@@ -9,10 +9,11 @@ Next.js (App Router) + MySQL 8.4 + Redis — แทน Apps Script + Google Shee
 
 | path | หน้าที่ |
 |---|---|
-| `lib/tb/` | business logic ล้วน ไม่แตะ DB (ปีงบ/ไตรมาส, `toIso`, งานต้องติดตาม A–D, สรุปผู้สัมผัส, followup 12 ช่อง, เป้าหมาย) |
+| `lib/tb/` | business logic ล้วน ไม่แตะ DB ย้ายจาก Code.gs/Index.html (ปีงบ/ไตรมาส, `toIso`, งานต้องติดตาม A–D, นัดหมาย, สรุปผู้สัมผัส, followup 12 ช่อง, เป้าหมาย, ตัวเลือกฟอร์ม, หัวคอลัมน์ Sheet เดิม) |
 | `lib/db.ts` | `tbDb` (ppc_tb, utf8mb4, อ่าน/เขียน) และ `hosxpDb` (HOSxP, tis620, SELECT อย่างเดียว, pool 3) |
 | `lib/redis.ts`, `lib/env.ts` | Redis client, ตรวจ env ตอน start (`instrumentation.ts`) |
-| `db/migrations/` | schema — `NNN_*.sql` เรียงเลข **ห้ามแก้ไฟล์ที่รันแล้ว** ให้เพิ่มไฟล์ใหม่ |
+| `docs/ppc_tb_schema.sql` | schema ฉบับเต็ม (ต้นฉบับของ `001_init.sql`) |
+| `db/migrations/` | `001_init` (schema) + `002_app_grants` — `NNN_*.sql` เรียงเลข **ห้ามแก้ไฟล์ที่รันแล้ว** ให้เพิ่มไฟล์ใหม่ |
 | `db/init/` | สร้างบัญชี `tb_app` / `tb_migrate` ตอน MySQL container เริ่มครั้งแรก |
 | `scripts/migrate.ts` | migration runner (จำ checksum ใน `schema_migrations`) |
 | `app/api/health` | healthcheck (MySQL + Redis) ไม่ต้อง login |

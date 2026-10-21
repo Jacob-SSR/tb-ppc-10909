@@ -2,7 +2,10 @@
 // หมวด 4 ติดตามระหว่างรักษา: 5 ช่องเริ่มต้น เพิ่มได้ถึง 12 ช่อง (§6.4)
 
 import { DEFAULT_FOLLOWUP_SLOTS, MAX_FOLLOWUP_SLOTS } from "./constants.ts";
-import type { FollowupRow } from "./types.ts";
+import type { FollowupRow, FollowupTest } from "./types.ts";
+
+/** ค่าใน ENUM ของคอลัมน์ tb_treatment_followups.test */
+export const FOLLOWUP_TESTS: readonly FollowupTest[] = ["CXR", "AFB", "Xpert", "culture", "LFT", "other"];
 
 export type FollowupInput = Omit<FollowupRow, "patient_id">;
 
@@ -11,7 +14,9 @@ export function followupsForForm(rows: readonly FollowupInput[]): FollowupInput[
   const bySlot = new Map(rows.map((r) => [r.slot, r]));
   for (const d of DEFAULT_FOLLOWUP_SLOTS) {
     if (!bySlot.has(d.slot)) {
-      bySlot.set(d.slot, { slot: d.slot, month_no: d.month_no, test_type: d.test_type, test_date: null, result: null });
+      bySlot.set(d.slot, {
+        slot: d.slot, month_no: d.month_no, test: d.test, test_date: null, result: null, note: null,
+      });
     }
   }
   return [...bySlot.values()].sort((a, b) => a.slot - b.slot);
@@ -35,9 +40,10 @@ export function validateFollowups(rows: readonly FollowupInput[]): string[] {
     }
     if (seen.has(r.slot)) errors.push(`ช่องที่ ${r.slot} ซ้ำ`);
     seen.add(r.slot);
-    if (r.month_no !== null && (!Number.isInteger(r.month_no) || r.month_no < 0 || r.month_no > 36)) {
-      errors.push(`ช่องที่ ${r.slot}: เดือนที่ต้องเป็น 0–36`);
+    if (!Number.isInteger(r.month_no) || r.month_no < 0 || r.month_no > 24) {
+      errors.push(`ช่องที่ ${r.slot}: เดือนที่ต้องเป็น 0–24`);
     }
+    if (!FOLLOWUP_TESTS.includes(r.test)) errors.push(`ช่องที่ ${r.slot}: ชนิดตรวจไม่ถูกต้อง`);
   }
   return errors;
 }

@@ -1,7 +1,10 @@
 // lib/tb/targets.ts
 // เป้าหมายตัวชี้วัด แยกปีงบ + ไตรมาส (§6.1) — การ์ดแสดง A/B = ผลงาน/เป้าหมาย
+// + สูตร Treatment Coverage / Success Rate ตามแดชบอร์ดเดิม
 
-import type { TargetRow } from "./types.ts";
+import { OUTCOME_SUCCESS } from "./constants.ts";
+import { isConcluded } from "./tasks.ts";
+import type { PatientRow, TargetRow } from "./types.ts";
 
 export type PeriodQuarter = 0 | 1 | 2 | 3 | 4; // 0 = ทั้งปีงบ
 
@@ -25,7 +28,7 @@ export function findTarget(
 ): number | null {
   const t = targets.find((r) => r.fy === fy && Number(r.quarter) === quarter && r.indicator === indicator);
   if (!t) return null;
-  const v = Number(t.target_value);
+  const v = Number(t.target);
   return Number.isFinite(v) ? v : null;
 }
 
@@ -56,4 +59,35 @@ export function targetProgress(actual: number, target: number | null): TargetPro
     reached: actual >= target,
     label: `${actual}/${target}`,
   };
+}
+
+// ── ตัวชี้วัดของแดชบอร์ดเดิม ────────────────────────────────────────────────
+
+/** ผู้ป่วยใหม่ + กลับเป็นซ้ำ (ตัวตั้งของ Treatment Coverage) */
+export function isNewOrRelapse(p: Pick<PatientRow, "patient_type">): boolean {
+  return p.patient_type === "NEW" || p.patient_type === "Relapse";
+}
+
+/**
+ * Treatment Coverage = ผู้ป่วยใหม่และกลับเป็นซ้ำที่ขึ้นทะเบียน ÷ เป้าจำนวนที่จังหวัดคาดประมาณ × 100
+ * คืน null เมื่อยังไม่ตั้งเป้า (ระบบเดิมเก็บใน DB_Settings key target_cases_<ปีงบ>, เป้า % default 88)
+ */
+export function treatmentCoverage(
+  patients: readonly Pick<PatientRow, "patient_type">[],
+  targetCases: number | null,
+): { count: number; pct: number | null } {
+  const count = patients.filter(isNewOrRelapse).length;
+  return { count, pct: targetCases ? (count * 100) / targetCases : null };
+}
+
+/**
+ * Success Rate = (หาย + รักษาครบ) ÷ ผู้ป่วยที่สรุปผลแล้ว × 100 (เป้า default 88)
+ * ระบบเดิมนับผู้ป่วยทั้งปีงบที่สรุปผลแล้ว ไม่ใช่ cohort — รอยืนยัน (CLAUDE.md §11 ข้อ 3)
+ */
+export function successRate(
+  patients: readonly Pick<PatientRow, "outcome">[],
+): { success: number; concluded: number; pct: number | null } {
+  const concluded = patients.filter((p) => isConcluded(p.outcome));
+  const success = concluded.filter((p) => (OUTCOME_SUCCESS as readonly string[]).includes(p.outcome.trim())).length;
+  return { success, concluded: concluded.length, pct: concluded.length ? (success * 100) / concluded.length : null };
 }
