@@ -71,18 +71,37 @@ services:
     command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru --save "" --appendonly no
     mem_limit: 128m
 
-  # เครื่องมือ: รันเฉพาะตอนสั่ง (`docker compose run --rm migrate`) ไม่ขึ้นพร้อม `up`
+  # เครื่องมือ: รันเฉพาะตอนสั่ง ไม่ขึ้นพร้อม `up`
+  #   docker compose run --rm migrate                                  สร้าง/อัปเดต schema (บัญชี tb_migrate)
   migrate:
     build:
       context: .
-      target: migrate
-    image: tb-ppc-migrate:latest
+      target: tools
+    image: tb-ppc-tools:latest
     profiles: ["tools"]
     env_file:
       - .env.mysql
     environment:
       - TB_DB_HOST=mysql
       - TB_MIGRATE_USER=tb_migrate
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  #   docker compose run --rm cli node scripts/create-admin.ts <user> "<ชื่อ>"   สร้างผู้ดูแลคนแรก
+  #   docker compose run --rm cli node scripts/import-from-sheet.ts             ย้ายข้อมูลจาก Google Sheet
+  cli:
+    image: tb-ppc-tools:latest
+    build:
+      context: .
+      target: tools
+    profiles: ["tools"]
+    env_file:
+      - .env.production
+    environment:
+      - TB_DB_HOST=mysql
+      - REDIS_URL=redis://redis:6379
+      - TZ=Asia/Bangkok
     depends_on:
       mysql:
         condition: service_healthy

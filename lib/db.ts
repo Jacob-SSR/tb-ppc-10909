@@ -83,3 +83,8 @@ export async function withTransaction<T>(fn: (conn: mysql.PoolConnection) => Pro
     conn.release();
   }
 }
+
+/** ปิดทุก pool — สคริปต์ CLI ต้องเรียกก่อนจบ (pool มี timer ของ idleTimeout ค้างทำให้ process ไม่ออก) */
+export async function closePools(): Promise<void> {
+  await Promise.allSettled([tbDb.end(), hosxpDb.end()]);
+}

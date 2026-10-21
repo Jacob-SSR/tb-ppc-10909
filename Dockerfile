@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# stage: deps → builder → runner (แอป) / migrate (เครื่องมือรัน migration)
+# stage: deps → builder → runner (แอป) / tools (migrate, สร้าง admin, import)
 
 FROM node:22-slim AS base
 WORKDIR /app
@@ -19,11 +19,12 @@ COPY . .
 # เครื่องที่ build ต้องต่อเน็ตได้ (next/font/google โหลดฟอนต์ตอน build)
 RUN npm run build
 
-# ---------- migrate (docker compose run --rm migrate) ----------
-FROM base AS migrate
+# ---------- tools: migrate / create-admin / import (docker compose run --rm migrate | cli) ----------
+FROM base AS tools
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY db ./db
+COPY lib ./lib
 COPY scripts ./scripts
 USER node
 CMD ["node", "scripts/migrate.ts"]

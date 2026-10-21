@@ -12,14 +12,17 @@
     "test": "node --test \"tests/**/*.test.ts\"",
     "migrate": "node --env-file-if-exists=.env.local scripts/migrate.ts",
     "migrate:status": "node --env-file-if-exists=.env.local scripts/migrate.ts --status",
-    "test:db": "node --env-file-if-exists=.env.local --test \"tests/db/*.dbtest.ts\""
+    "test:db": "node --env-file-if-exists=.env.local --test \"tests/db/*.dbtest.ts\"",
+    "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/*.e2e.ts\""
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
+    "exceljs": "^4.4.0",
     "googleapis": "^187.0.0",
     "ioredis": "^5.11.1",
     "mysql2": "^3.24.6",
     "next": "16.4.2",
+    "nodemailer": "^10.1.7",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "zod": "^4.6.7"
@@ -28,6 +31,7 @@
     "@tailwindcss/turbopack": "^4",
     "@types/bcrypt": "^6.0.0",
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
@@ -37,5 +41,8 @@
   },
   "engines": {
     "node": ">=22.18"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   }
 }
