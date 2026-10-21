@@ -24,6 +24,10 @@ services:
       - TB_DB_HOST=mysql
       - REDIS_URL=redis://redis:6379
       - TZ=Asia/Bangkok
+      # worker ตรวจทุกเช้า 09:00: backup ล่าสุดเก่ากว่า 26 ชม. → แจ้ง LINE
+      - BACKUP_CHECK_DIR=/backups
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups:ro
     depends_on:
       mysql:
         condition: service_healthy
@@ -70,6 +74,41 @@ services:
     # ใช้แค่ rate limit / lock / cache — ข้อมูลหลักอยู่ใน MySQL จึงไม่ต้อง persist
     command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru --save "" --appendonly no
     mem_limit: 128m
+
+  # backup ทุกคืน 01:00 → ${BACKUP_DIR} (ตั้งให้ชี้ NAS/แชร์ไดรฟ์นอกเครื่อง .58) เก็บ 30 วัน
+  #   docker compose run --rm backup now      backup ทันที
+  backup:
+    image: mysql:8.4
+    container_name: tb-ppc-backup
+    restart: unless-stopped
+    entrypoint: ["/backup.sh"]
+    env_file:
+      - .env.mysql
+    environment:
+      - TZ=Asia/Bangkok
+      - BACKUP_HOUR=1
+      - BACKUP_KEEP_DAYS=30
+    volumes:
+      - ./db/backup/backup.sh:/backup.sh:ro
+      - ${BACKUP_DIR:-./backups}:/backups
+    depends_on:
+      mysql:
+        condition: service_healthy
+    mem_limit: 256m
+
+  # เปิดใช้นอก รพ. ผ่าน Cloudflare Tunnel (ทีหลัง): ใส่ TUNNEL_TOKEN ใน .env.tunnel แล้ว
+  #   docker compose --profile tunnel up -d
+  # ใน Cloudflare: Public hostname → http://app:3000, ตั้ง Access policy (≤ 50 คนฟรี)
+  tunnel:
+    image: cloudflare/cloudflared:2025.8.1
+    container_name: tb-ppc-tunnel
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    env_file:
+      - .env.tunnel
+    depends_on:
+      - app
 
   # เครื่องมือ: รันเฉพาะตอนสั่ง ไม่ขึ้นพร้อม `up`
   #   docker compose run --rm migrate                                  สร้าง/อัปเดต schema (บัญชี tb_migrate)

@@ -57,6 +57,7 @@ export const POST = route(async (req) => {
 
   if (!u) {
     await burnPasswordCheck(password);
+    await rateLimit("login:fail:global", 200, 15 * 60);
     await writeAudit(tbDb, { userId: null, action: "login_failed", entity: "user", changes: { username }, ip });
     throw new HttpError(401, WRONG);
   }
@@ -67,6 +68,10 @@ export const POST = route(async (req) => {
   }
 
   if (!(await verifyPassword(password, u.password_hash))) {
+    // จำกัดรหัสผิดรวมทั้งระบบ — กันไล่เดาหลายบัญชีโดยปลอม IP
+    if (!(await rateLimit("login:fail:global", 200, 15 * 60)).ok) {
+      throw new HttpError(429, "มีการเข้าสู่ระบบผิดจำนวนมากผิดปกติ ระบบหยุดรับชั่วคราว 15 นาที");
+    }
     const fails = u.failed_logins + 1;
     const lock = fails >= MAX_FAILS;
     await tbDb.execute(

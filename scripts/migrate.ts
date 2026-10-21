@@ -90,6 +90,15 @@ async function main() {
       ran++;
     }
 
+    // สิทธิ์ระดับตาราง — ใส่ซ้ำทุกครั้ง (GRANT รันซ้ำได้) เพื่อให้กลับมาครบหลัง restore จาก backup
+    if (!statusOnly) {
+      const grants = await readFile(path.join(MIGRATIONS_DIR, "../grants.sql"), "utf8").catch(() => "");
+      if (grants.trim()) {
+        await conn.query(grants);
+        console.log("✓ สิทธิ์ tb_app (db/grants.sql)");
+      }
+    }
+
     for (const v of applied.keys()) {
       if (!files.includes(v)) console.warn(`⚠ ${v} อยู่ใน schema_migrations แต่ไม่มีไฟล์แล้ว`);
     }

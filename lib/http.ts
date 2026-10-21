@@ -59,13 +59,14 @@ export async function readJson<T extends z.ZodType>(req: Request, schema: T): Pr
   return schema.parse(body);
 }
 
-/** IP ผู้ใช้ — ผ่าน Cloudflare Tunnel ใช้ cf-connecting-ip, ใน LAN ใช้ x-forwarded-for ตัวแรก */
+/**
+ * IP ผู้ใช้ (บันทึกใน audit + rate limit ราย IP)
+ * - ผ่าน Cloudflare Tunnel (ตั้ง TRUST_CLOUDFLARE=1): cf-connecting-ip — Cloudflare เขียนทับเอง ปลอมไม่ได้
+ * - เข้าตรงใน LAN: x-forwarded-for — Next ใส่ IP จริงให้เฉพาะเมื่อ client ไม่ได้ส่งมาเอง จึงปลอมได้
+ *   (ไม่กระทบการกันเดารหัส: ล็อกราย username + จำกัดรวมทั้งระบบ ไม่อิง IP)
+ */
 export function clientIp(req: Request): string | null {
   const h = req.headers;
-  return (
-    h.get("cf-connecting-ip") ??
-    h.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    h.get("x-real-ip") ??
-    null
-  );
+  const cf = process.env.TRUST_CLOUDFLARE === "1" ? h.get("cf-connecting-ip") : null;
+  return cf ?? h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? h.get("x-real-ip") ?? null;
 }

@@ -4,6 +4,9 @@
 //   02:00       : rebuild ทุกแท็บจาก MySQL
 //   07:00       : แจ้งนัด (LINE + อีเมล)
 //   ทุกชั่วโมง  : คิวค้าง > 1 ชม. → แจ้ง LINE (ไม่เกินทุก 6 ชม.)
+//   09:00       : backup ล่าสุดเก่ากว่า 26 ชม. → แจ้ง LINE (BACKUP_CHECK_DIR)
+import { readdir, stat } from "node:fs/promises";
+import path from "node:path";
 import { tbDb } from "../db.ts";
 import { lineConfigured, sendLine } from "../notify.ts";
 import { redis } from "../redis.ts";
@@ -56,6 +59,14 @@ function bangkokClock(now = new Date()) {
 
 const log = (...a: unknown[]) => console.log("[worker]", ...a);
 
+/** อายุ (ชม.) ของไฟล์ backup ล่าสุด — null = ไม่มีไฟล์เลย */
+async function newestBackupAgeHours(dir: string): Promise<number | null> {
+  const files = (await readdir(dir)).filter((f) => /^ppc_tb-.*\.sql\.gz$/.test(f));
+  if (!files.length) return null;
+  const times = await Promise.all(files.map(async (f) => (await stat(path.join(dir, f))).mtimeMs));
+  return (Date.now() - Math.max(...times)) / 3_600_000;
+}
+
 async function tick() {
   if (running || !(await claimLeadership())) return;
   running = true;
@@ -76,6 +87,13 @@ async function tick() {
     }
     if (h === 7 && (await once(`reminder:${today}`, 26 * 3600))) {
       log("แจ้งนัด:", await sendDailyReminder(tbDb, today));
+    }
+    const backupDir = process.env.BACKUP_CHECK_DIR;
+    if (backupDir && h === 9 && lineConfigured() && (await once(`backup-check:${today}`, 26 * 3600))) {
+      const age = await newestBackupAgeHours(backupDir).catch(() => null);
+      if (age === null || age > 26) {
+        await sendLine(`⚠ ระบบทะเบียนวัณโรค: ${age === null ? "ไม่พบไฟล์ backup" : `backup ล่าสุดเมื่อ ${Math.round(age)} ชม. ก่อน`} — ตรวจ service backup และที่เก็บไฟล์`);
+      }
     }
     if (sheets && lineConfigured() && (await once(`stale-check:${today}:${h}`, 3600))) {
       const s = await checkStaleOutbox(tbDb);
