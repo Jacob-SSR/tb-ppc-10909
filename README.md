@@ -39,6 +39,7 @@ curl http://127.0.0.1:3010/api/health   # {"ok":true,"db":true,"redis":true}
 
 - ข้อมูลอยู่ใน volume `tb_mysql` — **ห้าม `docker compose down -v`** บน production
 - รหัสผ่านใน `.env.mysql` ใช้ตอนสร้าง volume ครั้งแรกเท่านั้น จะเปลี่ยนภายหลังต้อง `ALTER USER` ใน MySQL ด้วย
+- `migrate` ขึ้น `Access denied for user 'tb_migrate'` = บัญชีไม่ถูกสร้าง: ดู `docker compose logs mysql | grep "\[init\]"` — บน Windows มักเกิดจาก `db/init/*.sh` เป็น CRLF (repo มี `.gitattributes` บังคับ LF แล้ว ถ้า clone ก่อนหน้านั้นให้ checkout ไฟล์ใหม่) จากนั้นตอนที่ยังไม่มีข้อมูลจริง `docker compose down -v` แล้วเริ่มใหม่
 - Backup ทุกคืน + ขั้นตอน restore จะเพิ่มใน Phase 7
 
 ## พัฒนาบนเครื่อง
