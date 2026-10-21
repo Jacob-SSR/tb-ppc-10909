@@ -10,7 +10,7 @@ import { useApp } from "./store";
 // ── นำเข้า / ส่งออก ────────────────────────────────────────────────────────────
 
 interface Report {
-  kind: string; sheet: string; dry: boolean; read: number; added: number; updated: number;
+  kind: string; sheet: string; dry: boolean; read: number; added: number; updated: number; unchanged: number;
   skipped: { row: number; reason: string }[]; unknownHeaders: string[];
 }
 
@@ -69,7 +69,7 @@ export function ImportExportTab() {
           {report && (
             <Card className="mt-3">
               <div className="font-semibold">{report.dry ? "ผลตรวจไฟล์ (ยังไม่บันทึก)" : "นำเข้าเสร็จ"} · แผ่นงาน &quot;{report.sheet}&quot;</div>
-              <div className="mt-1 text-sm">อ่าน {report.read} แถว · <b className="text-ok">เพิ่มใหม่ {report.added}</b> · <b className="text-brand">อัปเดต {report.updated}</b> · <b className="text-bad">ข้าม {report.skipped.length}</b></div>
+              <div className="mt-1 text-sm">อ่าน {report.read} แถว · <b className="text-ok">เพิ่มใหม่ {report.added}</b> · <b className="text-brand">อัปเดต {report.updated}</b> · ไม่เปลี่ยน {report.unchanged} · <b className="text-bad">ข้าม {report.skipped.length}</b></div>
               {report.unknownHeaders.length > 0 && <div className="mt-1 text-xs text-warn">ข้ามคอลัมน์ที่ไม่รู้จัก: {report.unknownHeaders.slice(0, 8).join(", ")}</div>}
               {report.skipped.length > 0 && (
                 <ul className="mt-2 max-h-48 overflow-y-auto text-sm text-bad">{report.skipped.map((s) => <li key={s.row}>แถว {s.row}: {s.reason}</li>)}</ul>

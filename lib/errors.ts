@@ -1,11 +1,12 @@
 // lib/errors.ts — error ที่ตอบกลับผู้ใช้ได้ (ไม่พึ่ง Next — ใช้ได้ทั้ง route handler และสคริปต์ CLI)
 export class HttpError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-    public extra?: Record<string, unknown>,
-  ) {
+  // เขียน field ตรงๆ (ไม่ใช้ parameter property) — สคริปต์ CLI รันด้วย type stripping ของ Node ซึ่งไม่รองรับ
+  status: number;
+  extra?: Record<string, unknown>;
+  constructor(status: number, message: string, extra?: Record<string, unknown>) {
     super(message);
+    this.status = status;
+    this.extra = extra;
   }
 }
 

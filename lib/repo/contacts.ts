@@ -48,7 +48,8 @@ export async function createContact(
 
 export async function updateContact(
   db: Queryable, id: string, version: number | undefined, input: ContactInput, actor: Actor,
-): Promise<{ id: string; version: number }> {
+  opts: { skipIfUnchanged?: boolean } = {},
+): Promise<{ id: string; version: number; changed: boolean }> {
   const cur = await lockRow(db, "tb_contacts", id, "ผู้สัมผัส");
   assertVersion(cur, version);
   if (actor.role !== "admin") {
@@ -58,8 +59,9 @@ export async function updateContact(
   const patient = await activePatient(db, input.patient_id);
   const row = { ...pick(input, CONTACT_KEYS), unit_id: resolveUnit(input, actor, patient) };
   const changes: Changes = diff(cur, row);
-  const newVersion = Number(cur.version) + 1;
   const cols = Object.keys(changes);
+  if (opts.skipIfUnchanged && !cols.length) return { id, version: Number(cur.version), changed: false };
+  const newVersion = Number(cur.version) + 1;
   await db.query(
     `UPDATE tb_contacts SET ${cols.map((c) => `${c} = ?, `).join("")}version = ?, updated_by = ? WHERE id = ?`,
     [...cols.map((c) => (row as Record<string, unknown>)[c] ?? null), newVersion, actor.id, id],
@@ -69,7 +71,7 @@ export async function updateContact(
     changes: cols.length ? changes : { บันทึก: [null, "ไม่มีการเปลี่ยนแปลง"] }, ip: actor.ip,
   });
   await enqueue(db, "contact", id);
-  return { id, version: newVersion };
+  return { id, version: newVersion, changed: true };
 }
 
 export async function deleteContact(db: Queryable, id: string, version: number | undefined, actor: Actor): Promise<void> {

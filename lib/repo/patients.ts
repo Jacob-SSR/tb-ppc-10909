@@ -72,12 +72,13 @@ async function nextSeq(db: Queryable, fy: number): Promise<number> {
 }
 
 export async function createPatient(
-  db: Queryable, input: PatientInput, actor: Actor, opts: { id?: string } = {},
+  db: Queryable, input: PatientInput, actor: Actor, opts: { id?: string } & SaveOptions = {},
 ): Promise<{ id: string }> {
   requireAdminActor(actor);
   const id = opts.id ?? newEntityId("P");
   const row = rowFromInput(input);
-  if (row.seq == null) row.seq = await nextSeq(db, row.fy as number);
+  if (opts.keepInputFy && input.fy) row.fy = input.fy;
+  if (row.seq == null && !opts.keepInputFy) row.seq = await nextSeq(db, row.fy as number);
   const cols = Object.keys(row);
   await db.query(
     `INSERT INTO tb_patients (id, ${cols.join(", ")}, created_by, updated_by) VALUES (?, ${cols.map(() => "?").join(", ")}, ?, ?)`,
@@ -90,16 +91,27 @@ export async function createPatient(
   return { id };
 }
 
+export interface SaveOptions {
+  /** นำเข้า: ไม่มีอะไรเปลี่ยน → ไม่บันทึก version/audit/outbox (รันซ้ำไม่สร้างประวัติขยะ) */
+  skipIfUnchanged?: boolean;
+  /** ย้ายข้อมูลเดิม: ใช้ปีงบตามแท็บเดิมแทนการคำนวณจากวันเริ่มยา และไม่เติมลำดับให้เอง */
+  keepInputFy?: boolean;
+}
+
 export async function updatePatient(
-  db: Queryable, id: string, version: number | undefined, input: PatientInput, actor: Actor,
-): Promise<{ id: string; version: number }> {
+  db: Queryable, id: string, version: number | undefined, input: PatientInput, actor: Actor, opts: SaveOptions = {},
+): Promise<{ id: string; version: number; changed: boolean }> {
   requireAdminActor(actor);
   const cur = await lockRow(db, "tb_patients", id, "ผู้ป่วย");
   assertVersion(cur, version);
   const row = rowFromInput(input);
+  if (opts.keepInputFy && input.fy) row.fy = input.fy;
   if (row.seq == null) row.seq = cur.seq;
   const changes: Changes = diff(cur, row);
   const fuChanges = input.followups ? await syncFollowups(db, id, input.followups, actor.id) : {};
+  if (opts.skipIfUnchanged && !Object.keys(changes).length && !Object.keys(fuChanges).length) {
+    return { id, version: Number(cur.version), changed: false };
+  }
   const newVersion = Number(cur.version) + 1;
   if (Object.keys(changes).length) {
     const cols = Object.keys(changes);
@@ -117,7 +129,7 @@ export async function updatePatient(
   });
   await enqueue(db, "patient", id);
   if (Object.keys(fuChanges).length) await enqueue(db, "followup", id);
-  return { id, version: newVersion };
+  return { id, version: newVersion, changed: true };
 }
 
 export async function deletePatient(db: Queryable, id: string, version: number | undefined, actor: Actor): Promise<void> {

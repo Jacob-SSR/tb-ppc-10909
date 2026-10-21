@@ -26,9 +26,13 @@ export interface ImportReport {
   read: number;
   added: number;
   updated: number;
+  /** ตรงกับในระบบแล้ว ไม่มีอะไรเปลี่ยน */
+  unchanged: number;
   skipped: { row: number; reason: string }[];
   unknownHeaders: string[];
 }
+
+type Outcome = "added" | "updated" | "unchanged";
 
 interface Ctx {
   db: Queryable;
@@ -69,7 +73,7 @@ async function migrateAudit(ctx: Ctx, entity: "patient" | "contact" | "visit", i
   });
 }
 
-async function importPatient(ctx: Ctx, rec: Record<string, unknown>): Promise<"added" | "updated"> {
+async function importPatient(ctx: Ctx, rec: Record<string, unknown>): Promise<Outcome> {
   const p = fromSheetRecord("patient", rec);
   if (p.errors.length) throw new HttpError(400, p.errors.join("; "));
   if (!p.data.name) throw new HttpError(400, "ไม่มีชื่อ");
@@ -100,17 +104,20 @@ async function importPatient(ctx: Ctx, rec: Record<string, unknown>): Promise<"a
   const parsed = patientInput.safeParse(merged);
   if (!parsed.success) throw new HttpError(400, zodMessage(parsed.error));
 
+  // ย้ายข้อมูล: ปีงบตามแท็บเดิม (บางรายลงทะเบียนในแท็บปีงบที่ต่างจากวันเริ่มยา)
+  const keepInputFy = ctx.mode === "migrate";
   if (existing) {
-    await updatePatient(ctx.db, existing.id as string, undefined, parsed.data, ctx.actor);
+    const r = await updatePatient(ctx.db, existing.id as string, undefined, parsed.data, ctx.actor, { skipIfUnchanged: true, keepInputFy });
+    if (!r.changed) return "unchanged";
     await migrateAudit(ctx, "patient", existing.id as string, existing.id as string, p.meta);
     return "updated";
   }
-  const { id } = await createPatient(ctx.db, parsed.data, ctx.actor, { id: p.id ?? undefined });
+  const { id } = await createPatient(ctx.db, parsed.data, ctx.actor, { id: p.id ?? undefined, keepInputFy });
   await migrateAudit(ctx, "patient", id, id, p.meta);
   return "added";
 }
 
-async function importContact(ctx: Ctx, rec: Record<string, unknown>): Promise<"added" | "updated"> {
+async function importContact(ctx: Ctx, rec: Record<string, unknown>): Promise<Outcome> {
   const c = fromSheetRecord("contact", rec);
   if (c.errors.length) throw new HttpError(400, c.errors.join("; "));
   if (!c.data.name) throw new HttpError(400, "ไม่มีชื่อผู้สัมผัส");
@@ -144,11 +151,11 @@ async function importContact(ctx: Ctx, rec: Record<string, unknown>): Promise<"a
   if (!parsed.success) throw new HttpError(400, zodMessage(parsed.error));
 
   let id: string;
-  let result: "added" | "updated";
+  let result: Outcome;
   if (existing) {
     id = existing.id as string;
-    await updateContact(ctx.db, id, undefined, parsed.data, ctx.actor);
-    result = "updated";
+    const r = await updateContact(ctx.db, id, undefined, parsed.data, ctx.actor, { skipIfUnchanged: true });
+    result = r.changed ? "updated" : "unchanged";
   } else {
     id = (await createContact(ctx.db, parsed.data, ctx.actor, { id: c.id ?? undefined })).id;
     result = "added";
@@ -158,11 +165,11 @@ async function importContact(ctx: Ctx, rec: Record<string, unknown>): Promise<"a
   if (npid && isEntityId(npid, "P") && (await findOne(ctx.db, "SELECT id FROM tb_patients WHERE id = ?", [npid]))) {
     await ctx.db.execute("UPDATE tb_contacts SET new_patient_id = ? WHERE id = ?", [npid, id]);
   }
-  await migrateAudit(ctx, "contact", id, patient.id as string, c.meta);
+  if (result !== "unchanged") await migrateAudit(ctx, "contact", id, patient.id as string, c.meta);
   return result;
 }
 
-async function importVisit(ctx: Ctx, rec: Record<string, unknown>): Promise<"added" | "updated"> {
+async function importVisit(ctx: Ctx, rec: Record<string, unknown>): Promise<Outcome> {
   const v = fromSheetRecord("visit", rec);
   if (v.errors.length) throw new HttpError(400, v.errors.join("; "));
   if (ctx.actor.id === null) throw new HttpError(400, "บันทึกรายครั้งต้องระบุผู้นำเข้า (--as <username>)");
@@ -205,7 +212,7 @@ export async function importRecords(
 
   const known = headerMap(kind);
   const unknownHeaders = [...new Set(records.flatMap((r) => Object.keys(r)))].filter((h) => !known.has(h.trim()));
-  const report: ImportReport = { kind, read: records.length, added: 0, updated: 0, skipped: [], unknownHeaders };
+  const report: ImportReport = { kind, read: records.length, added: 0, updated: 0, unchanged: 0, skipped: [], unknownHeaders };
 
   for (let i = 0; i < records.length; i++) {
     await db.query("SAVEPOINT import_row");
