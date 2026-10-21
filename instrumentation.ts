@@ -3,6 +3,8 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const { validateEnv } = await import("@/lib/env");
     validateEnv();
-    // Phase 6: เริ่ม outbox worker (leader election ผ่าน Redis) ที่นี่
+    // งานเบื้องหลัง: sync Google Sheet, rebuild 02:00, แจ้งนัด 07:00 (ตัวเดียวด้วย leader election ผ่าน Redis)
+    const { startWorker } = await import("@/lib/worker");
+    startWorker();
   }
 }

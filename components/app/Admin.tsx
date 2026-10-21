@@ -176,8 +176,45 @@ export function SettingsTab() {
         </div>
         <p className="mt-2 text-xs text-muted">token / รหัสต่างๆ เก็บใน env ของเซิร์ฟเวอร์เท่านั้น ไม่เก็บในฐานข้อมูลและไม่แสดงบนหน้าเว็บ</p>
       </Section>
+      {data.features.sheet && <SheetStatus />}
       <div className="flex justify-end"><Button onClick={save} disabled={busy}>{busy ? "กำลังบันทึก…" : "บันทึกเป้าหมายและอีเมล"}</Button></div>
     </>
+  );
+}
+
+interface SheetState { pending: number; oldest: string | null; last_error: string | null; last_sent: string | null }
+
+function SheetStatus() {
+  const [st, setSt] = useState<SheetState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api<SheetState>("GET", "/api/sheet").then(setSt).catch(() => {});
+  useEffect(() => { load(); }, []);
+  async function rebuild() {
+    if (!confirm("เขียน Google Sheet ใหม่ทั้งหมดจากฐานข้อมูลตอนนี้?")) return;
+    setBusy(true);
+    try {
+      const r = await api<{ counts: Record<string, number> }>("POST", "/api/sheet");
+      toast(`เขียน Sheet ใหม่แล้ว: ${Object.entries(r.counts).map(([k, v]) => `${k} ${v}`).join(" · ")}`);
+      load();
+    } catch (err) {
+      toast((err as Error).message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Section title="Google Sheet (สำเนาสำหรับดู — ระบบเขียนให้อัตโนมัติ)">
+      {!st ? <Spinner /> : (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {Number(st.pending) ? <Badge tone="warn">รอส่ง {st.pending} รายการ</Badge> : <Badge tone="ok">ส่งครบแล้ว</Badge>}
+          {st.last_sent && <span className="text-muted">ส่งล่าสุด {String(st.last_sent).slice(0, 16)}</span>}
+          {st.last_error && <span className="text-bad">ผิดพลาดล่าสุด: {st.last_error}</span>}
+          <span className="flex-1" />
+          <Button size="sm" variant="ghost" onClick={rebuild} disabled={busy}>{busy ? "กำลังเขียน…" : "เขียน Sheet ใหม่ทั้งหมดตอนนี้"}</Button>
+        </div>
+      )}
+      <p className="mt-2 text-xs text-muted">ส่งทุก 1 นาที · เขียนใหม่ทั้งหมดทุกคืน 02:00 · ค้างเกิน 1 ชม. แจ้ง LINE · แก้ข้อมูลที่เว็บนี้เท่านั้น (Sheet ถูกล็อกไม่ให้แก้มือ)</p>
+    </Section>
   );
 }
 
