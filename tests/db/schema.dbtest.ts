@@ -3,6 +3,7 @@
 // ข้อมูลทดสอบสังเคราะห์ทั้งหมด
 
 import assert from "node:assert/strict";
+import { readdirSync } from "node:fs";
 import { after, before, test } from "node:test";
 import mysql from "mysql2/promise";
 import { isTB, isTBSql, summarizeContacts, type ContactCountRow } from "../../lib/tb/contacts.ts";
@@ -61,7 +62,8 @@ async function insertContact(patientId: string, over: Record<string, unknown> = 
 
 test("migration ครบ + หน่วยบริการ 7 แห่ง", async () => {
   const [m] = await mig.query<mysql.RowDataPacket[]>("SELECT version FROM schema_migrations ORDER BY version");
-  assert.deepEqual(m.map((r) => r.version), ["001_init.sql", "002_app_grants.sql"]);
+  const files = readdirSync(new URL("../../db/migrations", import.meta.url)).filter((f) => f.endsWith(".sql")).sort();
+  assert.deepEqual(m.map((r) => r.version), files);
   const [u] = await app.query<mysql.RowDataPacket[]>("SELECT name, role FROM tb_units ORDER BY id");
   assert.equal(u.length, 7);
   assert.deepEqual(u[0], { name: "รพ.พลับพลาชัย", role: "admin" });

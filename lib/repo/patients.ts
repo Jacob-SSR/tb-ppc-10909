@@ -59,7 +59,10 @@ export async function syncFollowups(
 
 function rowFromInput(input: PatientInput) {
   const row = pick(input, PATIENT_KEYS) as Record<string, unknown>;
-  row.fy = fyOf((input.start_date || input.diag_date)!);
+  // ปีงบตามวันเริ่มยา (ไม่มีใช้วันวินิจฉัย) — ไม่มีวันที่เลยใช้ปีงบที่ส่งมา (ข้อมูลนำเข้า)
+  const d = input.start_date || input.diag_date;
+  row.fy = d ? fyOf(d) : input.fy;
+  if (!row.fy) throw badRequest("กรุณากรอกวันเริ่มยาหรือวันวินิจฉัย");
   return row;
 }
 

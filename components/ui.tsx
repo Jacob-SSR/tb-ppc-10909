@@ -1,5 +1,6 @@
 "use client";
 // ชุด UI พื้นฐาน — mobile-first ปุ่ม/ช่องกรอกใหญ่พอกดบนมือถือ (§6.6)
+import { formatThaiDate } from "@/lib/tb/dates";
 import { useEffect, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
@@ -30,7 +31,9 @@ export function Button({
   );
 }
 
-const fieldBase = "w-full rounded-xl border border-line bg-white px-3 py-2.5 text-foreground outline-none focus:border-brand-2 focus:ring-2 focus:ring-brand-2/20 disabled:bg-background read-only:bg-background";
+const fieldBase = "rounded-xl border border-line bg-white px-3 py-2.5 text-foreground outline-none focus:border-brand-2 focus:ring-2 focus:ring-brand-2/20 disabled:bg-background";
+/** กำหนดความกว้างเองได้ผ่าน className (w-auto, w-20) ไม่งั้นเต็มช่อง */
+const widthOf = (className?: string) => (/(^|\s)w-/.test(className ?? "") ? "" : "w-full");
 
 export function Field({ label, hint, wide, children }: { label: ReactNode; hint?: ReactNode; wide?: boolean; children: ReactNode }) {
   return (
@@ -43,11 +46,23 @@ export function Field({ label, hint, wide, children }: { label: ReactNode; hint?
 }
 
 export function Input(p: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...p} className={cx(fieldBase, p.className)} />;
+  if (p.type === "date") return <DateInput {...p} />;
+  return <input {...p} className={cx(fieldBase, widthOf(p.className), "read-only:bg-background", p.className)} />;
+}
+
+/** ช่องวันที่ของเบราว์เซอร์ + แสดงวันที่ พ.ศ. กำกับ (เก็บเป็น ค.ศ.) */
+function DateInput(p: InputHTMLAttributes<HTMLInputElement>) {
+  const v = typeof p.value === "string" ? p.value : "";
+  return (
+    <span className="flex flex-col gap-0.5">
+      <input {...p} className={cx(fieldBase, widthOf(p.className), p.className)} />
+      {v && <span className="text-xs text-brand-2">{formatThaiDate(v, "long")}</span>}
+    </span>
+  );
 }
 
 export function Textarea(p: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea rows={3} {...p} className={cx(fieldBase, "resize-y", p.className)} />;
+  return <textarea rows={3} {...p} className={cx(fieldBase, "w-full resize-y", p.className)} />;
 }
 
 export function Select({ options, placeholder = "", ...p }: SelectHTMLAttributes<HTMLSelectElement> & {
@@ -57,7 +72,7 @@ export function Select({ options, placeholder = "", ...p }: SelectHTMLAttributes
   const value = p.value === null || p.value === undefined ? "" : String(p.value);
   const known = options.some((o) => String(typeof o === "string" ? o : o.value) === value);
   return (
-    <select {...p} value={value} className={cx(fieldBase, p.className)}>
+    <select {...p} value={value} className={cx(fieldBase, widthOf(p.className), p.className)}>
       {placeholder !== false && <option value="">{placeholder}</option>}
       {options.map((o) => {
         const v = typeof o === "string" ? o : String(o.value);
@@ -73,7 +88,7 @@ export function Select({ options, placeholder = "", ...p }: SelectHTMLAttributes
 export function ComboInput({ options, listId, ...p }: InputHTMLAttributes<HTMLInputElement> & { options: readonly string[]; listId: string }) {
   return (
     <>
-      <input {...p} list={listId} className={cx(fieldBase, p.className)} />
+      <input {...p} list={listId} className={cx(fieldBase, widthOf(p.className), p.className)} />
       <datalist id={listId}>{options.map((o) => <option key={o} value={o} />)}</datalist>
     </>
   );

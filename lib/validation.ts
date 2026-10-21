@@ -90,9 +90,11 @@ export const patientFields = {
 export const patientInput = z
   .object({
     ...patientFields,
+    /** ปีงบ — ปกติคำนวณจากวันเริ่มยา/วันวินิจฉัย; ส่งมาเองได้ตอนนำเข้า (ข้อมูลเดิมบางแถวไม่มีวันที่) */
+    fy: intIn(2500, 2700).optional(),
     followups: z.array(followupInput).max(MAX_FOLLOWUP_SLOTS).optional(),
   })
-  .refine((p) => p.start_date || p.diag_date, { message: "กรุณากรอกวันเริ่มยาหรือวันวินิจฉัย", path: ["start_date"] })
+  .refine((p) => p.start_date || p.diag_date || p.fy, { message: "กรุณากรอกวันเริ่มยาหรือวันวินิจฉัย", path: ["start_date"] })
   .refine((p) => !p.followups || new Set(p.followups.map((f) => f.slot)).size === p.followups.length, {
     message: "ช่องติดตามซ้ำกัน",
     path: ["followups"],

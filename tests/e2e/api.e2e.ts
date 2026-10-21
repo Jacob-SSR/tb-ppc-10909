@@ -230,14 +230,16 @@ test("ประวัติการแก้ไข + เป้าหมาย",
   assert.ok((hc.json.rows as unknown[]).length >= 2);
 
   assert.equal((await unit.put("/api/settings", { targets: [] })).status, 403);
-  const t = [{ fy: 2570, quarter: 1, indicator: "case_finding", target: 15 }, { fy: 2570, quarter: 0, indicator: "success_rate", target: 88 }];
+  const count = async () => ((await admin.get("/api/data")).json.targets as { fy: number; quarter: number; indicator: string }[])
+    .filter((x) => x.fy === 2599 && x.indicator === "case_finding").length;
+  const t = [{ fy: 2599, quarter: 1, indicator: "case_finding", target: 15 }, { fy: 2599, quarter: 2, indicator: "case_finding", target: 20 }];
   assert.equal((await admin.put("/api/settings", { targets: t, reminder_emails: "a@x.com, a@x.com b@y.com" })).status, 200);
-  let d = await admin.get("/api/data");
-  assert.equal((d.json.targets as unknown[]).filter((x) => (x as { fy: number }).fy === 2570).length, 2);
+  assert.equal(await count(), 2);
+  const d = await admin.get("/api/data");
   assert.equal((d.json.settings as Record<string, string>).reminder_emails, "a@x.com, b@y.com");
-  assert.equal((await admin.put("/api/settings", { targets: [{ fy: 2570, quarter: 1, indicator: "case_finding", target: null }] })).status, 200);
-  d = await admin.get("/api/data");
-  assert.equal((d.json.targets as unknown[]).filter((x) => (x as { fy: number }).fy === 2570).length, 1);
+  // เว้นว่าง = ลบเป้า (กลับเป็น "ยังไม่ตั้งเป้า")
+  assert.equal((await admin.put("/api/settings", { targets: t.map((x) => ({ ...x, target: null })) })).status, 200);
+  assert.equal(await count(), 0);
   assert.equal((await admin.put("/api/settings", { reminder_emails: "not-an-email" })).status, 400);
 });
 
@@ -259,4 +261,69 @@ test("logout", async () => {
   assert.equal((await x.get("/api/data")).status, 200);
   await x.post("/api/auth/logout");
   assert.equal((await x.get("/api/data")).status, 401);
+});
+
+test("Excel: ส่งออก + นำเข้า (dry run ไม่บันทึก, ช่องว่างไม่ลบค่าเดิม, แถวผิดถูกข้าม)", async () => {
+  const ExcelJS = (await import("exceljs")).default;
+  const { PATIENT_SHEET_COLUMNS } = await import("../../lib/tb/sheetColumns.ts");
+
+  const ex = await fetch(`${BASE}/api/export?fy=2570`, { headers: { Cookie: admin.cookie } });
+  assert.equal(ex.status, 200);
+  assert.match(ex.headers.get("content-type") ?? "", /spreadsheetml/);
+  const wbOut = new ExcelJS.Workbook();
+  await wbOut.xlsx.load(await ex.arrayBuffer());
+  assert.deepEqual(wbOut.worksheets.map((w) => w.name), ["ผู้ป่วย", "ผู้สัมผัส", "ติดตามระหว่างรักษา"]);
+  assert.equal(wbOut.worksheets[0].getRow(1).getCell(1).value, "รหัสระบบ");
+
+  // unit ส่งออกได้แค่ผู้สัมผัส, นำเข้าไม่ได้
+  const exUnit = await fetch(`${BASE}/api/export?fy=all`, { headers: { Cookie: unit.cookie } });
+  const wbUnit = new ExcelJS.Workbook();
+  await wbUnit.xlsx.load(await exUnit.arrayBuffer());
+  assert.deepEqual(wbUnit.worksheets.map((w) => w.name), ["ผู้สัมผัส"]);
+
+  const headers = PATIENT_SHEET_COLUMNS.map(([h]) => h);
+  const row = (o: Record<string, string>) => headers.map((h) => o[h] ?? "");
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("ผู้ป่วย");
+  ws.addRow(headers);
+  ws.addRow(row({ "ชื่อ-สกุล": `นำเข้าใหม่ ${tag}`, "HN": `x${tag}`.slice(0, 12), "วันเริ่มยา": "15/11/2569", "ประเภทผู้ป่วย": "NEW", "เดือน2 AFB": "NEG", "รพ.สต.รับผิดชอบ": "รพ.สต.ตาพระ" }));
+  ws.addRow(row({ "รหัสระบบ": patientId, "ชื่อ-สกุล": `ผู้ป่วยทดสอบ ${tag}`, "สูตรยา": "2IRZE + 4IR" })); // อัปเดตเฉพาะสูตรยา
+  ws.addRow(row({ "ชื่อ-สกุล": "วันที่ผิด", "วันเริ่มยา": "31/02/2569" }));
+  ws.addRow(row({ "ชื่อ-สกุล": "หน่วยผิด", "วันเริ่มยา": "01/12/2569", "รพ.สต.รับผิดชอบ": "รพ.สต.ไม่มีจริง" }));
+  const file = new Blob([await wb.xlsx.writeBuffer()]);
+
+  const send = async (c: Client, dry: boolean) => {
+    const fd = new FormData();
+    fd.set("file", file, "test.xlsx");
+    fd.set("kind", "patient");
+    fd.set("dry", dry ? "1" : "0");
+    const r = await fetch(`${BASE}/api/import`, { method: "POST", body: fd, headers: { Cookie: c.cookie } });
+    return { status: r.status, json: (await r.json()) as Record<string, unknown> };
+  };
+  assert.equal((await send(unit, true)).status, 403);
+
+  const before = ((await admin.get("/api/data")).json.patients as unknown[]).length;
+  const dry = await send(admin, true);
+  assert.equal(dry.status, 200, JSON.stringify(dry.json));
+  assert.equal(dry.json.added, 1);
+  assert.equal(dry.json.updated, 1);
+  assert.equal((dry.json.skipped as unknown[]).length, 2);
+  assert.equal(((await admin.get("/api/data")).json.patients as unknown[]).length, before); // dry ไม่บันทึก
+
+  const real = await send(admin, false);
+  assert.equal(real.json.added, 1);
+  const d = await admin.get("/api/data");
+  const ps = d.json.patients as Record<string, unknown>[];
+  assert.equal(ps.length, before + 1);
+  const updated = ps.find((p) => p.id === patientId)!;
+  assert.equal(updated.regimen, "2IRZE + 4IR");
+  assert.equal(updated.sex, "ชาย"); // ช่องว่างในไฟล์ไม่ลบค่าเดิม
+  assert.equal(updated.start_date, "2026-10-05");
+  const fresh = ps.find((p) => p.name === `นำเข้าใหม่ ${tag}`)!;
+  assert.equal(fresh.start_date, "2026-11-15");
+  assert.equal(fresh.fy, 2570);
+  const fu = (d.json.followups as Record<string, unknown>[]).filter((f) => f.patient_id === fresh.id);
+  assert.deepEqual(fu.map((f) => [f.slot, f.result]), [[2, "NEG"]]);
+  // แถวเดิมของผู้ป่วยที่อัปเดต: ช่องติดตามเดิมยังอยู่
+  assert.equal((d.json.followups as Record<string, unknown>[]).filter((f) => f.patient_id === patientId).length, 2);
 });

@@ -24,14 +24,16 @@ async function checkTarget(db: Queryable, v: Pick<VisitInput, "patient_id" | "co
   return r[0].patient_id as string;
 }
 
-export async function createVisit(db: Queryable, input: VisitInput, actor: Actor): Promise<{ id: string; duplicate: boolean }> {
+export async function createVisit(
+  db: Queryable, input: VisitInput, actor: Actor, opts: { id?: string } = {},
+): Promise<{ id: string; duplicate: boolean }> {
   if (input.client_uuid) {
     const [dup] = await db.query<Row[]>("SELECT id FROM tb_visits WHERE client_uuid = ?", [input.client_uuid]);
     if (dup[0]) return { id: dup[0].id as string, duplicate: true };
   }
   if (actor.id === null) throw badRequest("ต้องระบุผู้บันทึก");
   const patientId = await checkTarget(db, input, actor);
-  const id = newEntityId("V");
+  const id = opts.id ?? newEntityId("V");
   await db.execute(
     `INSERT INTO tb_visits (id, patient_id, contact_id, visit_date, visit_type, detail, next_appt, lat, lng, client_uuid, created_by, updated_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
