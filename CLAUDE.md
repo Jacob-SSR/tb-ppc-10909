@@ -4,7 +4,7 @@
 
 > **โปรเจกต์ใหม่** แยกจาก ppc-hos ทั้งหมด (repo, deploy, DB ของตัวเอง)
 > ไฟล์คู่กัน: `docs/ppc_tb_schema.sql` (schema MySQL ฉบับเต็ม = `db/migrations/001_init.sql`)
-> สถานะ: **Phase 1 เสร็จ** (scaffold, docker-compose, schema + migration, `lib/db.ts`, `lib/tb/*` + test) ทำตามลำดับ Phase ใน §10 ถามก่อนถ้าเจอข้อที่อยู่ใน §11 "ยังต้องยืนยัน"
+> สถานะ: **Phase 1–7 เสร็จในโค้ดและทดสอบแล้ว** — เหลือติดตั้งจริงบน .58 + cutover ตาม `docs/CUTOVER.md` · สิ่งที่ตัดสินใจระหว่างทางอยู่ใน §12 · ถามก่อนถ้าเจอข้อที่อยู่ใน §11 "ยังต้องยืนยัน"
 
 ## 0. แหล่งอ้างอิง (อ่านอย่างเดียว ห้ามแก้)
 
@@ -177,6 +177,8 @@ Cutover: ปิดการเขียนใน Apps Script → import รอ�
 
 `app/api/tb-dashboard/route.ts` และ `app/api/tb-map/route.ts` อ่านช่วง `A:Z` (26 คอลัมน์) แต่ `DB_Patients` มี 38 คอลัมน์ → "ผลการรักษา" (AH) และ "วันสรุปผล" หลุด Success/Death Rate อาจผิด ต้องแก้ใน repo ppc-hos แยกต่างหาก ก่อนหรือพร้อม cutover
 
+เพิ่มเติม: `normOutcome` ใน `tb-dashboard` จับเฉพาะคำอังกฤษ (cured/completed/died/lost/transfer) แต่ "ผลการรักษา" ใน `DB_Patients` เป็นภาษาไทย (หาย/รักษาครบ/เสียชีวิต/ขาดยา/โอนออก/กำลังรักษา) → ต้องแม็ปคำไทยด้วย ไม่งั้น Success/Death Rate ผิดแม้แก้ช่วงคอลัมน์แล้ว
+
 ## 10. ลำดับงาน
 
 1. **Phase 1** — scaffold โปรเจกต์ + `docker-compose.yml` (app + mysql + redis) + schema + `lib/db.ts` (`tbDb`, `hosxpDb`) + `lib/tb/*` (logic ล้วน + test)
@@ -188,6 +190,7 @@ Cutover: ปิดการเขียนใน Apps Script → import รอ�
 7. **Phase 7** — backup ทุกคืน + ทดสอบ restore → cutover → เปิดนอกผ่าน Cloudflare Tunnel ทีหลัง
 
 แต่ละ Phase จบที่ทดสอบผ่าน แล้วเสนอ commit message ภาษาไทยแบบ conventional commit (Jed commit/push เอง)
+— Phase 1–7 commit แล้วบน branch `claude/nifty-euler-jwytsx` (commit ละ Phase)
 
 UI: ธีมเขียว/มิ้นต์, ฟอนต์ Prompt/Sarabun (สอดคล้องกับ ppc-hos)
 
@@ -200,3 +203,18 @@ UI: ธีมเขียว/มิ้นต์, ฟอนต์ Prompt/Sarabun 
 5. ยังใช้ "วง 1/2/3" ไหม เมื่อจับแค่ household / close contact
 6. ตัด CID / พิกัด ออกจาก Sheet mirror ได้ไหม
 7. ผู้ใช้นอก รพ. กี่คน (≤ 50 ใช้ Cloudflare Access ฟรีได้)
+
+## 12. ตัดสินใจระหว่างพัฒนา (เลือกค่าที่ปลอดภัยไว้ก่อน — เปลี่ยนได้)
+
+1. **migration 003**: `tb_users` + `must_change_password`, `session_version` (ตัด session เมื่อ reset/ปิดบัญชี/เปลี่ยนรหัส), `password_changed_at`, `updated_at`; `tb_treatment_followups` + `deleted_at` (ลบช่องที่เพิ่มเองได้โดย tb_app ไม่ต้องมี DELETE); `tb_app` ได้ DELETE บน `tb_targets` (ล้างเป้า = "ยังไม่ตั้งเป้า") — สิทธิ์ระดับตารางรวมอยู่ที่ `db/grants.sql` ใส่ซ้ำทุกครั้งที่ migrate
+2. **ตัวชี้วัดตั้งต้น 4 ตัว** (`lib/indicators.ts`): ผู้ป่วยใหม่+กลับเป็นซ้ำ (ราย), Treatment Coverage, Success Rate, อัตราเสียชีวิต — ครบชุดยังรอ §11 ข้อ 4
+3. **ไตรมาส** (§11 ข้อ 2): ค่าเริ่มต้น "เฉพาะ 3 เดือน" มีปุ่มสลับ "สะสม" ในแดชบอร์ด
+4. **Success/Death Rate** (§11 ข้อ 3): นับผู้ป่วยที่เริ่มยาในช่วงนั้นและสรุปผลแล้ว (แบบระบบเดิม) ยังไม่ใช่ cohort
+5. **Sheet mirror** (§11 ข้อ 6): ยังเขียน CID/พิกัดตามคอลัมน์เดิม; คอลัมน์ใหม่ของผู้สัมผัสต่อท้าย; แท็บ DB_* ถูกล็อกให้แก้ได้เฉพาะ service account
+6. **วง 1/2/3** (§11 ข้อ 5): ยังเก็บและแสดงในฟอร์มผู้สัมผัส
+7. **รพ.สต. เพิ่มผู้สัมผัส**: ค้นผู้ป่วย index ด้วย HN/ชื่อผ่าน `/api/patients/search` (ได้เฉพาะชื่อ/HN/วันเริ่มยา/ผล — ตาม §3) เพราะไม่เห็นรายชื่อผู้ป่วยทั้งหมด
+8. **ค้น HOSxP** ให้เฉพาะทีม รพ. (HOSxP มีข้อมูลผู้ป่วยทั้งโรงพยาบาล)
+9. **ย้ายข้อมูล** คงปีงบและลำดับตามแท็บเดิม (1 รายในข้อมูลจริงลงทะเบียนปีงบ 2568 แต่วันเริ่มยาคำนวณได้ 2567)
+10. **IP**: เชื่อ `cf-connecting-ip` เฉพาะเมื่อ `TRUST_CLOUDFLARE=1`; การกันเดารหัสใช้ ล็อกราย username + จำกัดรหัสผิดรวมทั้งระบบ (ไม่อิง IP ที่ปลอมได้)
+11. **ส่งออก Word** ของระบบเดิม (ประวัติผู้ป่วย/รายการติดตาม/สรุป) ยังไม่ได้ทำ — ใช้ส่งออก Excel แทน
+

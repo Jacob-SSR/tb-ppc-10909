@@ -90,6 +90,15 @@ async function main() {
       ran++;
     }
 
+    // สิทธิ์ระดับตาราง — ใส่ซ้ำทุกครั้ง (GRANT รันซ้ำได้) เพื่อให้กลับมาครบหลัง restore จาก backup
+    if (!statusOnly) {
+      const grants = await readFile(path.join(MIGRATIONS_DIR, "../grants.sql"), "utf8").catch(() => "");
+      if (grants.trim()) {
+        await conn.query(grants);
+        console.log("✓ สิทธิ์ tb_app (db/grants.sql)");
+      }
+    }
+
     for (const v of applied.keys()) {
       if (!files.includes(v)) console.warn(`⚠ ${v} อยู่ใน schema_migrations แต่ไม่มีไฟล์แล้ว`);
     }
@@ -102,5 +111,13 @@ async function main() {
 
 main().catch((err) => {
   console.error("[migrate] ล้มเหลว:", err instanceof Error ? err.message : err);
+  if ((err as { code?: string }).code === "ER_ACCESS_DENIED_ERROR") {
+    // บัญชีสร้างครั้งเดียวตอน volume ว่าง — สาเหตุที่เจอบ่อย 2 แบบ
+    console.error(
+      "  → ตรวจว่า init สร้างบัญชีแล้ว: docker compose logs mysql | grep \"\\[init\\]\"\n" +
+      "    ไม่เจอ = db/init/*.sh เป็น CRLF (checkout บน Windows) หรือ volume ถูกสร้างก่อนตั้งรหัสใน .env.mysql\n" +
+      "    เจอ = TB_MIGRATE_PASSWORD ไม่ตรงกับตอนสร้าง volume (รหัสใน .env.mysql มีผลครั้งแรกเท่านั้น)",
+    );
+  }
   process.exit(1);
 });

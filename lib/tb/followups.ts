@@ -9,6 +9,10 @@ export const FOLLOWUP_TESTS: readonly FollowupTest[] = ["CXR", "AFB", "Xpert", "
 
 export type FollowupInput = Omit<FollowupRow, "patient_id">;
 
+export const toFollowupInput = (f: FollowupInput): FollowupInput => ({
+  slot: f.slot, month_no: f.month_no, test: f.test, test_date: f.test_date, result: f.result, note: f.note,
+});
+
 /** ช่องที่ฟอร์มต้องแสดง: 5 ช่องเริ่มต้นเสมอ (เติมค่าว่าง) + ช่องที่เพิ่มเอง เรียงตาม slot */
 export function followupsForForm(rows: readonly FollowupInput[]): FollowupInput[] {
   const bySlot = new Map(rows.map((r) => [r.slot, r]));

@@ -1,26 +1,53 @@
 @import "tailwindcss";
 
+/* ธีมเขียว/มิ้นต์ — สีเดียวกับระบบเดิม (ผู้ป่วย = เขียว, ผู้สัมผัส = ส้มอิฐ) */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f6f8f7;
+  --foreground: #1c2422;
+  --card: #ffffff;
+  --line: #dfe6e3;
+  --muted: #5d6b67;
+  --brand: #1d4d40;
+  --brand-2: #2e8a72;
+  --mint: #e6f4ef;
+  --contact: #8b3a12;
+  --contact-bg: #fff4e8;
+  --ok: #1f7a4d;
+  --ok-bg: #e3f4ea;
+  --warn: #a15c07;
+  --warn-bg: #fff3d6;
+  --bad: #b42318;
+  --bad-bg: #fde8e7;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-card: var(--card);
+  --color-line: var(--line);
+  --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-brand-2: var(--brand-2);
+  --color-mint: var(--mint);
+  --color-contact: var(--contact);
+  --color-contact-bg: var(--contact-bg);
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-bad: var(--bad);
+  --color-bad-bg: var(--bad-bg);
+  --font-sans: var(--font-sarabun), "Leelawadee UI", Tahoma, sans-serif;
+  --font-heading: var(--font-prompt), "Leelawadee UI", Tahoma, sans-serif;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  font-size: 15px;
+}
+
+h1, h2, h3, legend {
+  font-family: var(--font-heading);
 }

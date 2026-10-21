@@ -13,12 +13,13 @@ const OPTIONAL_ENV = [
   "HOSXP_DB_USER",
   "HOSXP_DB_PASSWORD",
   "HOSXP_DB_NAME",
-  // Google Sheet mirror (Phase 6)
+  // Google Sheet mirror
   "GOOGLE_SERVICE_ACCOUNT_EMAIL",
   "GOOGLE_PRIVATE_KEY",
   "TB_SPREADSHEET_ID",
-  // แจ้งเตือน LINE OA (Phase 6) — token อยู่ใน env เท่านั้น ห้ามเก็บใน DB
+  // แจ้งเตือน LINE OA / อีเมล — token อยู่ใน env เท่านั้น ห้ามเก็บใน DB
   "LINE_CHANNEL_ACCESS_TOKEN",
+  "SMTP_HOST",
 ] as const;
 
 export function validateEnv(): void {
