@@ -121,18 +121,22 @@ docker compose up -d                     # แล้วกด "เขียน S
 
 ## พัฒนาบนเครื่อง
 
+ใช้ mysql/redis ตัวเดียวกับ compose แต่เปิด port 3307/6380 ด้วย `docker-compose.dev.yml` (กันชนกับ MySQL ที่ติดตั้งบนเครื่อง เช่น XAMPP ที่ใช้ 3306)
+
 ```bash
 npm install
-docker run -d --name tb-dev-mysql -p 127.0.0.1:3306:3306 \
-  -e MYSQL_ROOT_PASSWORD=root -e TB_APP_PASSWORD=app -e TB_MIGRATE_PASSWORD=mig \
-  -v "$PWD/db/init:/docker-entrypoint-initdb.d:ro" mysql:8.4 \
-  --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
-docker run -d --name tb-dev-redis -p 127.0.0.1:6379:6379 redis:7-alpine
-cp .env.example .env.local   # TB_DB_PASSWORD=app, TB_MIGRATE_PASSWORD=mig, SESSION_SECRET=(สุ่ม 32+ ตัว), WORKER=0
+cp .env.mysql.example .env.mysql   # ใส่รหัส 3 ตัว (ก่อนเปิด mysql ครั้งแรก)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql redis
+cp .env.example .env.local
+#   TB_DB_HOST=127.0.0.1  TB_DB_PORT=3307  TB_DB_PASSWORD=(= TB_APP_PASSWORD)
+#   TB_MIGRATE_PASSWORD=(= ใน .env.mysql)  REDIS_URL=redis://127.0.0.1:6380
+#   SESSION_SECRET=(สุ่ม 32+ ตัว)  WORKER=0
 npm run migrate
 node --env-file=.env.local scripts/create-admin.ts admin "ผู้ดูแล"
 npm run dev
 ```
+
+ตอน start แอปพิมพ์ `[db] ต่อ MySQL tb_app@host:port/ppc_tb ได้/ไม่ได้` พร้อมสาเหตุ — ถ้า error เป็น `'tb_app'@'localhost'` แปลว่าไปต่อ MySQL ที่ติดตั้งบนเครื่อง ไม่ใช่ตัวใน Docker (Docker จะเห็นเป็น `@'172.x.x.x'`)
 
 ## ทดสอบ
 

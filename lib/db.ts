@@ -88,3 +88,38 @@ export async function withTransaction<T>(fn: (conn: mysql.PoolConnection) => Pro
 export async function closePools(): Promise<void> {
   await Promise.allSettled([tbDb.end(), hosxpDb.end()]);
 }
+
+/**
+ * ตรวจตอน start ว่าต่อ tbDb ได้ — พิมพ์ปลายทาง (ไม่พิมพ์รหัส) และคำแนะนำตามอาการที่เจอบ่อย
+ * ไม่ throw: แอปยังเปิดได้ (หน้า login / health บอกสถานะเอง)
+ */
+export async function checkTbDb(): Promise<boolean> {
+  const host = process.env.TB_DB_HOST ?? "mysql";
+  const port = Number(process.env.TB_DB_PORT ?? 3306);
+  const user = process.env.TB_DB_USER ?? "tb_app";
+  const database = process.env.TB_DB_NAME ?? "ppc_tb";
+  const target = `${user}@${host}:${port}/${database}`;
+  try {
+    await tbDb.query("SELECT 1 FROM tb_users LIMIT 1");
+    console.log(`[db] ต่อ MySQL ${target} ได้`);
+    return true;
+  } catch (err) {
+    const e = err as { code?: string; message?: string };
+    console.error(`[db] ต่อ MySQL ${target} ไม่ได้: ${e.message}`);
+    const hint =
+      e.code === "ER_ACCESS_DENIED_ERROR" && /@'localhost'/.test(e.message ?? "")
+        ? `MySQL ที่ตอบอยู่ port ${port} เป็นตัวที่ติดตั้งบนเครื่องนี้ (XAMPP/MySQL Service) ไม่ใช่ตัวใน Docker\n` +
+          "       (ถ้าเป็น Docker จะเห็นเป็น @'172.x.x.x') → เปิด port ของ container เป็นเลขอื่น เช่น 3307 แล้วตั้ง TB_DB_PORT ให้ตรง"
+        : e.code === "ER_ACCESS_DENIED_ERROR"
+          ? "TB_DB_PASSWORD ไม่ตรงกับ TB_APP_PASSWORD ที่ใช้ตอนสร้าง volume mysql ครั้งแรก"
+          : e.code === "ECONNREFUSED"
+            ? `ไม่มี MySQL รับที่ ${host}:${port} — container mysql เปิดอยู่และเปิด port นี้ไว้หรือยัง`
+            : e.code === "ER_NO_SUCH_TABLE"
+              ? "ยังไม่ได้รัน migrate"
+              : e.code === "ENOTFOUND"
+                ? `หา host "${host}" ไม่เจอ — ชื่อ mysql ใช้ได้เฉพาะใน docker compose, รันบนเครื่องใช้ 127.0.0.1`
+                : null;
+    if (hint) console.error(`  → ${hint}`);
+    return false;
+  }
+}

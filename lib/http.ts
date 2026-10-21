@@ -30,10 +30,16 @@ export function route<C>(fn: Handler<C>): Handler<C> {
         );
       }
       console.error(`[api] ${req.method} ${req.nextUrl.pathname}`, err);
+      if (DB_DOWN.has((err as { code?: string })?.code ?? "")) {
+        return Response.json({ error: "เชื่อมต่อฐานข้อมูลไม่ได้ กรุณาแจ้งผู้ดูแลระบบ" }, { status: 503 });
+      }
       return Response.json({ error: "ระบบขัดข้อง กรุณาลองใหม่" }, { status: 500 });
     }
   };
 }
+
+/** ต่อฐานข้อมูลไม่ได้ (ตั้งค่าผิด / DB ล่ม) — ไม่ใช่ความผิดของผู้ใช้ */
+const DB_DOWN = new Set(["ER_ACCESS_DENIED_ERROR", "ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "PROTOCOL_CONNECTION_LOST"]);
 
 /** error ของ MySQL ที่เกิดจากข้อมูลผู้ใช้ (ไม่ใช่ระบบพัง) → ข้อความภาษาไทย */
 function mysqlErrorMessage(err: unknown): string | null {
