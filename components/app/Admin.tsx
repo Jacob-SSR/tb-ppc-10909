@@ -14,6 +14,79 @@ interface Report {
   skipped: { row: number; reason: string }[]; unknownHeaders: string[];
 }
 
+interface MigrateResult {
+  dry: boolean; source: string; warnings: string[];
+  reports: { tab: string; report: Omit<Report, "kind" | "sheet" | "dry"> }[];
+  log: { read: number; added: number };
+  inDb: { patients: number; contacts: number; visits: number };
+  inSource: { patients: number; contacts: number; visits: number };
+}
+
+/** ย้ายข้อมูลจากระบบเดิมจากเว็บ (แทนการรันสคริปต์) — อ่าน Google Sheet ตรง หรือไฟล์ .xlsx ที่ดาวน์โหลดมา */
+function MigratePanel() {
+  const { data, reload } = useApp();
+  const [file, setFile] = useState<File | null>(null);
+  const [res, setRes] = useState<MigrateResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const canSheet = data.features.sheet;
+
+  async function run(dry: boolean) {
+    if (!dry && !confirm(`ยืนยันย้ายข้อมูลจาก ${res?.source ?? "ระบบเดิม"} เข้าระบบ? (รันซ้ำได้ — ข้อมูลเดิมถูกอัปเดตตามรหัส ไม่ซ้ำ)`)) return;
+    setBusy(true);
+    const fd = new FormData();
+    fd.set("dry", dry ? "1" : "0");
+    if (file) fd.set("file", file);
+    try {
+      const r = await api<MigrateResult>("POST", "/api/migrate", fd);
+      setRes(r);
+      if (!dry) {
+        toast(`ย้ายข้อมูลแล้ว: ผู้ป่วยในระบบ ${r.inDb.patients} ราย`);
+        await reload();
+      }
+    } catch (err) {
+      toast((err as Error).message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const skipped = res ? res.reports.reduce((n, x) => n + x.report.skipped.length, 0) : 0;
+  return (
+    <Section title="ย้ายข้อมูลจากระบบเดิม (Google Sheet → ระบบนี้)">
+      <p className="mb-3 text-sm text-muted">
+        ดึง DB_Patients / DB_Contacts / DB_Visits / DB_Log จากระบบเดิม คงรหัสเดิม รันซ้ำได้ (ไม่เพิ่มซ้ำ) · ไม่ดึง DB_Users (PIN)
+        · {canSheet ? "ไม่เลือกไฟล์ = อ่านจาก Google Sheet ตรง" : "ยังไม่ได้ตั้ง Google Sheet — ดาวน์โหลด Sheet เป็น .xlsx แล้วเลือกไฟล์"}
+      </p>
+      <div className="flex flex-wrap items-end gap-2 rounded-xl border-2 border-dashed border-line bg-background p-3">
+        <Field label={canSheet ? "ไฟล์ .xlsx (ไม่บังคับ)" : "ไฟล์ .xlsx"}><Input type="file" accept=".xlsx" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setRes(null); }} /></Field>
+        <Button onClick={() => run(true)} disabled={busy || (!canSheet && !file)}>{busy ? "กำลังอ่าน…" : "1) ตรวจก่อน (ยังไม่บันทึก)"}</Button>
+      </div>
+      {res && (
+        <Card className="mt-3">
+          <div className="font-semibold">{res.dry ? "ผลตรวจ (ยังไม่บันทึก)" : "ย้ายข้อมูลเสร็จ"} · จาก {res.source}</div>
+          {res.warnings.map((w) => <div key={w} className="text-sm text-warn">⚠ {w}</div>)}
+          <ul className="mt-1 space-y-0.5 text-sm">
+            {res.reports.map(({ tab, report: r }) => (
+              <li key={tab}>{tab}: อ่าน {r.read} · <b className="text-ok">เพิ่ม {r.added}</b> · <b className="text-brand">อัปเดต {r.updated}</b> · ไม่เปลี่ยน {r.unchanged} · <b className="text-bad">ปฏิเสธ {r.skipped.length}</b></li>
+            ))}
+            <li>DB_Log: นำเข้าเป็นประวัติ {res.log.added} จาก {res.log.read}</li>
+          </ul>
+          <div className={`mt-2 text-sm font-semibold ${res.inDb.patients >= res.inSource.patients ? "text-ok" : "text-bad"}`}>
+            ผู้ป่วยในระบบหลังย้าย {res.inDb.patients} · ในแหล่ง {res.inSource.patients}
+            {res.inDb.patients > res.inSource.patients && <span className="font-normal text-muted"> (เกินเพราะมีรายที่คีย์ในระบบนี้อยู่แล้ว เช่น ข้อมูลทดสอบ)</span>}
+          </div>
+          {skipped > 0 && (
+            <ul className="mt-2 max-h-48 overflow-y-auto text-sm text-bad">
+              {res.reports.flatMap(({ tab, report }) => report.skipped.map((x) => <li key={`${tab}${x.row}`}>{tab} แถว {x.row}: {x.reason}</li>))}
+            </ul>
+          )}
+          {res.dry && <Button className="mt-3" onClick={() => run(false)} disabled={busy}>2) ย้ายข้อมูลจริง</Button>}
+        </Card>
+      )}
+    </Section>
+  );
+}
+
 export function ImportExportTab() {
   const { fy, isAdmin, reload } = useApp();
   const [kind, setKind] = useState<"patient" | "contact">("patient");
@@ -52,6 +125,7 @@ export function ImportExportTab() {
           <a href="/api/export?fy=all"><Button variant="ghost">ส่งออกทุกปีงบ</Button></a>
         </div>
       </Section>
+      {isAdmin && <MigratePanel />}
       {isAdmin ? (
         <Section title="นำเข้าจาก Excel">
           <p className="mb-3 text-sm text-muted">
@@ -89,6 +163,8 @@ export function ImportExportTab() {
 
 // ── ตั้งเป้าหมาย + การแจ้งเตือน ────────────────────────────────────────────────
 
+const QUARTER_MONTHS: Record<PeriodQuarter, string> = { 0: "ต.ค.–ก.ย.", 1: "ต.ค.–ธ.ค.", 2: "ม.ค.–มี.ค.", 3: "เม.ย.–มิ.ย.", 4: "ก.ค.–ก.ย." };
+
 export function SettingsTab() {
   const { data, fys, fy: currentFy, reload } = useApp();
   const [fy, setFy] = useState(currentFy);
@@ -103,6 +179,19 @@ export function SettingsTab() {
   };
   const [emails, setEmails] = useState(data.settings.reminder_emails ?? "");
   const [busy, setBusy] = useState(false);
+
+  /** แบ่งเป้าทั้งปีลง Q1–Q4: จำนวนราย = หาร 4 (เศษให้ไตรมาสแรกๆ), ร้อยละ = ใช้ค่าเดียวกันทุกไตรมาส */
+  function splitYear(ind: (typeof INDICATORS)[number]) {
+    const year = Number(vals[key(0, ind.id)]);
+    if (!vals[key(0, ind.id)]?.trim() || !Number.isFinite(year)) return toast("กรอกช่อง \"ทั้งปีงบ\" ก่อน", "bad");
+    const next = { ...vals };
+    for (const q of [1, 2, 3, 4]) {
+      next[key(q, ind.id)] = ind.unit === "percent"
+        ? String(year)
+        : String(Math.floor(year / 4) + (q <= Math.round(year) % 4 ? 1 : 0));
+    }
+    setVals(next);
+  }
 
   async function save() {
     setBusy(true);
@@ -137,14 +226,26 @@ export function SettingsTab() {
         <div className="mb-3 flex items-center gap-2">
           <span className="text-sm text-muted">ปีงบ</span>
           <Select className="w-auto" placeholder={false} options={years.map((y) => ({ value: y, label: String(y) }))} value={fy} onChange={(e) => changeFy(Number(e.target.value))} />
-          <span className="text-xs text-muted">เว้นว่าง = ยังไม่ตั้งเป้า (การ์ดแสดง &quot;ยังไม่ตั้งเป้า&quot; ไม่ใช่ 0%)</span>
+        </div>
+        <div className="mb-3 rounded-xl bg-mint p-3 text-sm leading-relaxed">
+          <div className="mb-1 font-semibold text-brand">กรอกอะไร?</div>
+          <ul className="list-disc space-y-0.5 pl-5">
+            <li>แถวแรก <b>ผู้ป่วยใหม่ + กลับเป็นซ้ำ</b> → กรอก <b>จำนวนคน (ราย)</b> ที่จังหวัดให้เป็นเป้า เช่น เป้าทั้งปี 60 ราย → ทั้งปีงบ <b>60</b>, แต่ละไตรมาส <b>15</b></li>
+            <li>แถวที่เป็น <b>%</b> → กรอก<b>ตัวเลขร้อยละ</b> ไม่ต้องพิมพ์เครื่องหมาย % เช่น Success Rate เป้า 88% → กรอก <b>88</b></li>
+            <li><b>อัตราเสียชีวิต</b> ยิ่งต่ำยิ่งดี → กรอก<b>ค่าสูงสุดที่ยอมรับได้</b> เช่น ไม่เกิน 5% → กรอก <b>5</b></li>
+            <li><b>Q1</b> ต.ค.–ธ.ค. · <b>Q2</b> ม.ค.–มี.ค. · <b>Q3</b> เม.ย.–มิ.ย. · <b>Q4</b> ก.ค.–ก.ย. — ถ้าไม่ดูรายไตรมาส กรอกแค่ <b>ทั้งปีงบ</b> ก็พอ หรือกด <b>&quot;แบ่งลงไตรมาส&quot;</b> ให้ระบบเติมให้</li>
+            <li>Treatment Coverage คำนวณจากแถวแรก — ต้องกรอกเป้าจำนวนผู้ป่วยของช่วงนั้นก่อนจึงจะแสดงผลได้</li>
+            <li>ช่องที่เว้นว่าง = ยังไม่ตั้งเป้า (แดชบอร์ดแสดง &quot;ยังไม่ตั้งเป้า&quot; ไม่ใช่ 0%)</li>
+          </ul>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="text-left text-muted">
                 <th className="py-2 pr-2 font-medium">ตัวชี้วัด</th>
-                {([0, 1, 2, 3, 4] as PeriodQuarter[]).map((q) => <th key={q} className="px-1 font-medium">{PERIOD_LABEL[q]}</th>)}
+                {([0, 1, 2, 3, 4] as PeriodQuarter[]).map((q) => (
+                  <th key={q} className="px-1 font-medium">{PERIOD_LABEL[q]}<div className="text-[11px] font-normal">{QUARTER_MONTHS[q]}</div></th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -153,10 +254,18 @@ export function SettingsTab() {
                   <td className="py-2 pr-2">
                     <div className="font-medium">{ind.label} <span className="text-xs text-muted">({ind.unit === "cases" ? "ราย" : "%"})</span></div>
                     <div className="text-xs text-muted">{ind.hint}</div>
+                    <button type="button" className="mt-1 text-xs text-brand-2 underline" onClick={() => splitYear(ind)}>
+                      แบ่งลงไตรมาส {ind.unit === "cases" ? "(ทั้งปี ÷ 4)" : "(ใช้ค่าเดียวกับทั้งปี)"}
+                    </button>
                   </td>
                   {([0, 1, 2, 3, 4] as PeriodQuarter[]).map((q) => (
                     <td key={q} className="px-1 py-2">
-                      <Input type="number" min={0} step={ind.unit === "percent" ? 0.1 : 1} value={vals[key(q, ind.id)] ?? ""} onChange={(e) => setVals({ ...vals, [key(q, ind.id)]: e.target.value })} className="w-20" />
+                      <div className="relative w-24">
+                        <Input type="number" min={0} max={ind.unit === "percent" ? 100 : undefined} step={ind.unit === "percent" ? 0.1 : 1}
+                          aria-label={`${ind.label} ${PERIOD_LABEL[q]}`}
+                          value={vals[key(q, ind.id)] ?? ""} onChange={(e) => setVals({ ...vals, [key(q, ind.id)]: e.target.value })} className="pr-9" />
+                        <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted">{ind.unit === "percent" ? "%" : "ราย"}</span>
+                      </div>
                     </td>
                   ))}
                 </tr>
@@ -182,7 +291,7 @@ export function SettingsTab() {
   );
 }
 
-interface SheetState { pending: number; oldest: string | null; last_error: string | null; last_sent: string | null }
+interface SheetState { pending: number; oldest: string | null; last_error: string | null; last_sent: string | null; blocked: string | null }
 
 function SheetStatus() {
   const [st, setSt] = useState<SheetState | null>(null);
@@ -204,16 +313,17 @@ function SheetStatus() {
   }
   return (
     <Section title="Google Sheet (สำเนาสำหรับดู — ระบบเขียนให้อัตโนมัติ)">
+      {st?.blocked && <p className="mb-2 rounded-xl bg-bad-bg p-3 text-sm text-bad">⛔ {st.blocked}</p>}
       {!st ? <Spinner /> : (
         <div className="flex flex-wrap items-center gap-2 text-sm">
           {Number(st.pending) ? <Badge tone="warn">รอส่ง {st.pending} รายการ</Badge> : <Badge tone="ok">ส่งครบแล้ว</Badge>}
           {st.last_sent && <span className="text-muted">ส่งล่าสุด {String(st.last_sent).slice(0, 16)}</span>}
           {st.last_error && <span className="text-bad">ผิดพลาดล่าสุด: {st.last_error}</span>}
           <span className="flex-1" />
-          <Button size="sm" variant="ghost" onClick={rebuild} disabled={busy}>{busy ? "กำลังเขียน…" : "เขียน Sheet ใหม่ทั้งหมดตอนนี้"}</Button>
+          <Button size="sm" variant="ghost" onClick={rebuild} disabled={busy || !!st.blocked}>{busy ? "กำลังเขียน…" : "เขียน Sheet ใหม่ทั้งหมดตอนนี้"}</Button>
         </div>
       )}
-      <p className="mt-2 text-xs text-muted">ส่งทุก 1 นาที · เขียนใหม่ทั้งหมดทุกคืน 02:00 · ค้างเกิน 1 ชม. แจ้ง LINE · แก้ข้อมูลที่เว็บนี้เท่านั้น (Sheet ถูกล็อกไม่ให้แก้มือ)</p>
+      <p className="mt-2 text-xs text-muted">ส่งทุก 1 นาที · เขียนใหม่ทั้งหมดทุกคืน 02:00 · ค้างเกิน 1 ชม. แจ้ง LINE · แก้ข้อมูลที่เว็บนี้ (แก้ใน Sheet จะถูกเขียนทับรอบถัดไป)</p>
     </Section>
   );
 }

@@ -9,9 +9,11 @@ import { api } from "./api";
 import { ContactCard, ContactSummaryLine, Info, isRR, OutcomeBadge, TaskLine, th } from "./bits";
 import { useApp } from "./store";
 import { Timeline } from "./Timeline";
+import { exportPatientWord } from "./wordExports";
 
 export function PatientDetail({ id }: { id: string }) {
-  const { patientById, contactsOf, followupsOf, open, isAdmin, unitName, data, reload, tasksOfPatient } = useApp();
+  const store = useApp();
+  const { patientById, contactsOf, followupsOf, open, isAdmin, unitName, data, reload, tasksOfPatient } = store;
   const p = patientById(id);
   if (!p) return <Modal open onClose={() => open(null)} title="ไม่พบผู้ป่วย"><Empty>อาจถูกลบแล้ว หรืออยู่นอกเขตที่ท่านดูได้</Empty></Modal>;
 
@@ -20,6 +22,8 @@ export function PatientDetail({ id }: { id: string }) {
   const fus = followupsForForm(followupsOf(id).map(toFollowupInput));
   const tasks = isAdmin ? tasksOfPatient(p) : [];
   const episodes = data.patients.filter((x) => x.id !== p.id && ((p.hn && x.hn === p.hn) || (p.cid && x.cid === p.cid)));
+  // HN นี้เคยถูกบันทึกเป็นผู้สัมผัสของผู้ป่วยรายอื่น (ระบบเดิมแสดงในส่วน "เคยขึ้นทะเบียน")
+  const asContact = data.contacts.filter((c) => p.hn && c.hn === p.hn && c.new_patient_id !== p.id && c.patient_id !== p.id);
   const close = () => open(null);
 
   async function remove() {
@@ -45,6 +49,7 @@ export function PatientDetail({ id }: { id: string }) {
         <>
           {isAdmin && <Button variant="danger" size="sm" onClick={remove}>ลบ</Button>}
           {isAdmin && <Button variant="ghost" size="sm" onClick={() => open({ type: "history", id, title: `${p.name} · HN ${p.hn || "-"}`, back: { type: "patient", id } })}>ประวัติการแก้ไข</Button>}
+          {isAdmin && <Button variant="ghost" size="sm" onClick={() => exportPatientWord(store, p)}>📄 ส่งออก Word</Button>}
           <span className="flex-1" />
           <Button variant="ghost" onClick={close}>ปิด</Button>
           {isAdmin && <Button onClick={() => open({ type: "patientForm", patient: p })}>แก้ไขข้อมูลผู้ป่วย</Button>}
@@ -58,7 +63,8 @@ export function PatientDetail({ id }: { id: string }) {
           <Info label="สูตรยา">{p.regimen}</Info>
           <Info label="วินิจฉัย">{p.diag_basis}</Info>
           <Info label="ผลดื้อ Rifampicin">{p.rr}</Info>
-          <Info label="ที่อยู่">{[p.address, p.area].filter(Boolean).join(" ")}</Info>
+          <Info label="ที่อยู่ตามทะเบียน">{[p.address, p.area].filter(Boolean).join(" ")}</Info>
+          {p.current_address && <Info label="ที่อยู่ปัจจุบัน">{p.current_address}</Info>}
           <Info label="รพ.สต.รับผิดชอบ">{unitName(p.unit_id)}</Info>
           <Info label="โรคร่วม">{p.comorbid}</Info>
         </div>
@@ -117,20 +123,23 @@ export function PatientDetail({ id }: { id: string }) {
         <div className="mt-3">
           <Button variant="contact" size="sm" onClick={() => open({
             type: "contact",
-            contact: { patient_id: id, contact_type: "household", ring: 1, unit_id: isAdmin ? (p.unit_id ?? undefined) : data.user.unitId, address: [p.address, p.area].filter(Boolean).join(" ") || null },
+            contact: { patient_id: id, contact_type: "household", ring: 1, unit_id: isAdmin ? (p.unit_id ?? undefined) : data.user.unitId, address: [p.address, p.area].filter(Boolean).join(" ") || null, current_address: p.current_address ?? null },
           })}>+ เพิ่มผู้สัมผัส</Button>
         </div>
       </Section>
 
       {isAdmin && <Timeline refId={id} label={p.name} canAdd />}
 
-      {episodes.length > 0 && (
-        <Section title={`เคยขึ้นทะเบียนวัณโรค (${episodes.length} ครั้ง)`}>
+      {(episodes.length > 0 || asContact.length > 0) && (
+        <Section title={episodes.length ? `เคยขึ้นทะเบียนวัณโรค (${episodes.length} ครั้ง)` : "ประวัติเดิม"}>
           {episodes.map((x) => (
             <button key={x.id} onClick={() => open({ type: "patient", id: x.id })} className="mb-1 block w-full rounded-xl border border-line p-2 text-left text-sm hover:border-brand-2">
               ปีงบ {x.fy} · {x.patient_type || "-"} · เริ่มยา {th(x.start_date) || "-"} · {x.regimen ?? ""} <OutcomeBadge outcome={x.outcome} />
             </button>
           ))}
+          {asContact.length > 0 && (
+            <p className="mt-1 text-sm text-warn">เคยเป็นผู้สัมผัสของผู้ป่วย {asContact.map((c) => patientById(c.patient_id)?.name ?? "?").join(", ")}</p>
+          )}
         </Section>
       )}
       {isAdmin && p.notes && <Section title="บันทึก"><div className="whitespace-pre-wrap text-sm">{p.notes}</div></Section>}

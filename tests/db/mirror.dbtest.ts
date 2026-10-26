@@ -8,12 +8,13 @@ import { redis } from "../../lib/redis.ts";
 import { createPatient, deletePatient, updatePatient } from "../../lib/repo/patients.ts";
 import { COLUMNS } from "../../lib/tb/sheetRows.ts";
 import { patientInput } from "../../lib/validation.ts";
-import { Mirror, TABS } from "../../lib/worker/mirror.ts";
-import type { SheetApi, TabInfo } from "../../lib/worker/sheetApi.ts";
+import { Mirror, MirrorBlocked, TABS } from "../../lib/worker/mirror.ts";
+import { PROTECT_DESC, type SheetApi, type TabInfo } from "../../lib/worker/sheetApi.ts";
 
 /** Google Sheets ปลอม: เก็บแต่ละแท็บเป็น string[][] (แถว 1 = index 0) */
 class FakeSheets implements SheetApi {
-  tabsData = new Map<string, { sheetId: number; rows: string[][]; rowCount: number; protectedBy: string[] }>();
+  tabsData = new Map<string, { sheetId: number; rows: string[][]; rowCount: number; prot: { id: number; users: string[]; desc: string }[] }>();
+  private protId = 1;
   fail = false;
   calls = 0;
   private parse(range: string) {
@@ -27,7 +28,10 @@ class FakeSheets implements SheetApi {
   }
   async tabs(): Promise<TabInfo[]> {
     this.guard();
-    return [...this.tabsData].map(([title, t]) => ({ title, sheetId: t.sheetId, rowCount: t.rowCount, protectedBy: t.protectedBy }));
+    return [...this.tabsData].map(([title, t]) => ({
+      title, sheetId: t.sheetId, rowCount: t.rowCount,
+      protectedBy: t.prot.flatMap((p) => p.users), ourProtections: t.prot.filter((p) => p.desc === PROTECT_DESC).map((p) => p.id),
+    }));
   }
   async get(range: string) {
     this.guard();
@@ -58,7 +62,7 @@ class FakeSheets implements SheetApi {
   async batch(requests: Record<string, any>[]) {
     this.guard();
     for (const r of requests) {
-      if (r.addSheet) this.tabsData.set(r.addSheet.properties.title, { sheetId: this.tabsData.size + 100, rows: [], rowCount: 1000, protectedBy: [] });
+      if (r.addSheet) this.tabsData.set(r.addSheet.properties.title, { sheetId: this.tabsData.size + 100, rows: [], rowCount: 1000, prot: [] });
       const byId = (id: number) => [...this.tabsData.values()].find((t) => t.sheetId === id)!;
       if (r.appendDimension) byId(r.appendDimension.sheetId).rowCount += r.appendDimension.length;
       if (r.deleteDimension) {
@@ -66,7 +70,11 @@ class FakeSheets implements SheetApi {
         t.rows.splice(r.deleteDimension.range.startIndex, r.deleteDimension.range.endIndex - r.deleteDimension.range.startIndex);
         t.rowCount--;
       }
-      if (r.addProtectedRange) byId(r.addProtectedRange.protectedRange.range.sheetId).protectedBy.push(...r.addProtectedRange.protectedRange.editors.users);
+      if (r.addProtectedRange) {
+        const pr = r.addProtectedRange.protectedRange;
+        byId(pr.range.sheetId).prot.push({ id: this.protId++, users: pr.editors.users, desc: pr.description });
+      }
+      if (r.deleteProtectedRange) for (const t of this.tabsData.values()) t.prot = t.prot.filter((p) => p.id !== r.deleteProtectedRange.protectedRangeId);
     }
   }
   data(kind: keyof typeof TABS) {
@@ -82,22 +90,43 @@ const count = async (sql: string) => Number((await tbDb.query<mysql.RowDataPacke
 before(async () => {
   for (const k of Object.values(TABS)) await redis.del(`tb:sheet:rows:${k}`);
   // ข้อมูลเก่าในระบบเดิมที่ไม่เกี่ยว ต้องไม่ถูกแตะ
-  fake.tabsData.set("DB_Users", { sheetId: 1, rows: [["หน่วยบริการ", "PIN"]], rowCount: 1000, protectedBy: [] });
+  fake.tabsData.set("DB_Users", { sheetId: 1, rows: [["หน่วยบริการ", "PIN"]], rowCount: 1000, prot: [] });
 });
 after(async () => {
   await redis.quit();
   await closePools();
 });
 
-test("ensureTabs: สร้างแท็บ + หัวคอลัมน์เดิม + ป้องกันแก้มือ", async () => {
-  await mirror.ensureTabs("sa@project.iam.gserviceaccount.com");
+test("ensureTabs: สร้างแท็บ + หัวคอลัมน์เดิม, ล็อกเฉพาะเมื่อ SHEET_PROTECT และถอดล็อกได้", async () => {
+  const sa = "sa@project.iam.gserviceaccount.com";
+  await mirror.ensureTabs(sa, true);
   for (const [kind, tab] of Object.entries(TABS)) {
     assert.deepEqual(fake.tabsData.get(tab)!.rows[0], COLUMNS[kind as keyof typeof TABS].map(([h]) => h));
-    assert.deepEqual(fake.tabsData.get(tab)!.protectedBy, ["sa@project.iam.gserviceaccount.com"]);
+    assert.deepEqual(fake.tabsData.get(tab)!.prot.flatMap((p) => p.users), [sa]);
   }
-  await mirror.ensureTabs("sa@project.iam.gserviceaccount.com"); // ซ้ำได้ ไม่ป้องกันซ้อน
-  assert.equal(fake.tabsData.get("DB_Patients")!.protectedBy.length, 1);
+  await mirror.ensureTabs(sa, true); // ซ้ำได้ ไม่ป้องกันซ้อน
+  assert.equal(fake.tabsData.get("DB_Patients")!.prot.length, 1);
+  // ล็อกที่คนอื่นใส่เองต้องไม่ถูกถอด
+  fake.tabsData.get("DB_Patients")!.prot.push({ id: 999, users: ["owner@example.com"], desc: "ของเจ้าของไฟล์" });
+  await mirror.ensureTabs(sa); // ค่าเริ่มต้น = ไม่ล็อก → ถอดเฉพาะที่ระบบใส่
+  for (const tab of Object.values(TABS)) assert.ok(!fake.tabsData.get(tab)!.prot.some((p) => p.desc === PROTECT_DESC));
+  assert.deepEqual(fake.tabsData.get("DB_Patients")!.prot.map((p) => p.id), [999]);
   assert.deepEqual(fake.tabsData.get("DB_Users")!.rows, [["หน่วยบริการ", "PIN"]]);
+});
+
+test("ตัวกัน: Sheet มีแถวที่ยังไม่อยู่ใน MySQL → ไม่ rebuild ไม่ส่งคิว และแถวเดิมอยู่ครบ", async () => {
+  await redis.del("tb:sheet:safe");
+  const tab = fake.tabsData.get("DB_Patients")!;
+  const real = ["Pdeadbeef01", "2569", "1", "ผู้ป่วยจริงที่ยังไม่ได้ import"];
+  tab.rows.push(real, ["", "", "", "พิมพ์เพิ่มเองไม่มี id"]);
+  await assert.rejects(mirror.rebuild(), (e) => e instanceof MirrorBlocked && e.foreign.DB_Patients === 2);
+  const input = patientInput.parse({ name: "คิวรอ import", hn: "G1", start_date: "2026-11-02" });
+  await createPatient(tbDb, input, admin);
+  const r = await mirror.processOutbox();
+  assert.ok(r.blocked && r.sent === 0);
+  assert.ok(await count("SELECT COUNT(*) n FROM tb_sheet_outbox WHERE sent_at IS NULL") > 0, "คิวต้องยังอยู่");
+  assert.ok(tab.rows.some((x) => x[0] === real[0]), "แถวจริงต้องไม่หาย");
+  tab.rows = tab.rows.filter((x) => x !== real && x[3] !== "พิมพ์เพิ่มเองไม่มี id");
 });
 
 test("rebuild: ทุกแท็บตรงกับ MySQL และปิดคิวที่ค้าง", async () => {

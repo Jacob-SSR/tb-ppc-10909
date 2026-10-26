@@ -7,12 +7,13 @@ import { fyOf } from "@/lib/tb/dates";
 import { FOLLOWUP_TESTS, followupsForForm, nextFreeSlot, toFollowupInput, type FollowupInput } from "@/lib/tb/followups";
 import { OPTIONS } from "@/lib/tb/options";
 import { api, ApiError } from "./api";
+import { useHosxp } from "./hosxp";
 import { useApp } from "./store";
 import type { Patient } from "./types";
 
 type Form = Record<string, string>;
 const KEYS = [
-  "name", "hn", "tb_no", "cid", "sex", "age", "rights", "phone", "address", "area", "unit_id", "lat", "lng", "comorbid", "hiv",
+  "name", "hn", "tb_no", "cid", "sex", "age", "rights", "phone", "address", "area", "current_address", "unit_id", "lat", "lng", "comorbid", "hiv",
   "patient_type", "reg_place", "diag_basis", "rr", "diag_date", "start_date", "regimen", "admit_date", "dc_date", "lft",
   "outcome", "outcome_date", "notes", "seq",
 ] as const;
@@ -34,20 +35,11 @@ export function PatientForm({ patient }: { patient: Partial<Patient> | null }) {
   const otherEpisodes = f.hn ? data.patients.filter((x) => x.hn === f.hn.trim() && x.id !== patient?.id) : [];
   const back = () => (isNew ? open(null) : open({ type: "patient", id: patient!.id! }));
 
-  async function hosxp() {
-    if (!f.hn.trim()) return toast("กรอก HN ก่อน", "bad");
-    try {
-      const r = await api<Record<string, string | number | null>>("GET", `/api/hosxp?hn=${encodeURIComponent(f.hn.trim())}`);
-      setF((x) => ({
-        ...x,
-        name: String(r.name ?? x.name), cid: String(r.cid ?? x.cid), sex: String(r.sex ?? x.sex), age: r.age == null ? x.age : String(r.age),
-        rights: String(r.rights ?? x.rights), address: String(r.address ?? x.address), area: String(r.area ?? x.area), phone: String(r.phone ?? x.phone),
-      }));
-      toast("ดึงข้อมูลจาก HOSxP แล้ว ตรวจสอบก่อนบันทึก");
-    } catch (err) {
-      toast((err as Error).message, "bad");
-    }
-  }
+  // HOSxP: กรอก HN แล้วออกจากช่อง / เลขบัตรครบ 13 หลัก → เติมช่องว่างให้เอง, ปุ่ม = ดึงใหม่ทับทุกช่อง
+  const hx = useHosxp(data.features.hosxp, f, setF, (r) => ({
+    hn: r.hn, name: r.name, cid: r.cid, sex: r.sex, age: r.age, rights: r.rights, phone: r.phone, address: r.address, area: r.area,
+  }));
+  const regAddress = [f.address, f.area].filter((x) => x.trim()).join(" ");
 
   function setFu(slot: number, patch: Partial<FollowupInput>) {
     setFus((list) => list.map((x) => (x.slot === slot ? { ...x, ...patch } : x)));
@@ -90,13 +82,16 @@ export function PatientForm({ patient }: { patient: Partial<Patient> | null }) {
         <Grid>
           <Field label="HN" hint={otherEpisodes.length ? `เคยขึ้นทะเบียน: ${otherEpisodes.map((x) => `ปีงบ ${x.fy} (${x.outcome})`).join(", ")}` : undefined}>
             <div className="flex gap-2">
-              <Input {...bind("hn")} inputMode="numeric" />
-              {data.features.hosxp && <Button variant="ghost" size="sm" onClick={hosxp} className="flex-none">ดึงจาก HOSxP</Button>}
+              <Input {...bind("hn")} inputMode="numeric" onBlur={() => isNew && hx.lookup({ hn: f.hn }, false)} />
+              {data.features.hosxp && <Button variant="ghost" size="sm" disabled={hx.loading} onClick={() => hx.lookup({ hn: f.hn, cid: f.cid }, true)} className="flex-none">{hx.loading ? "กำลังดึง…" : "ดึงจาก HOSxP"}</Button>}
             </div>
           </Field>
           <Field label="ชื่อ-สกุล *"><Input {...bind("name")} /></Field>
           <Field label="TB number"><Input {...bind("tb_no")} /></Field>
-          <Field label="เลขบัตรประชาชน"><Input {...bind("cid")} inputMode="numeric" maxLength={17} /></Field>
+          <Field label="เลขบัตรประชาชน">
+            <Input {...bind("cid")} inputMode="numeric" maxLength={17}
+              onBlur={() => isNew && !f.hn.trim() && hx.lookup({ cid: f.cid }, false)} />
+          </Field>
           <Field label="เพศ"><Select options={OPTIONS.sex} {...bind("sex")} /></Field>
           <Field label="อายุ (ปี)"><Input type="number" min={0} max={150} {...bind("age")} /></Field>
           <Field label="สิทธิการรักษา"><ComboInput listId="dl-rights" options={OPTIONS.pttype} {...bind("rights")} /></Field>
@@ -108,6 +103,10 @@ export function PatientForm({ patient }: { patient: Partial<Patient> | null }) {
           <Field label="ผล HIV"><Select options={OPTIONS.hiv} {...bind("hiv")} /></Field>
           <Field label="Latitude"><Input inputMode="decimal" {...bind("lat")} /></Field>
           <Field label="Longitude"><Input inputMode="decimal" {...bind("lng")} /></Field>
+          <Field label={<span className="flex flex-wrap items-center gap-2">ที่อยู่ปัจจุบัน (ที่อยู่จริง ใช้ลงเยี่ยม)
+            {regAddress && <button type="button" className="text-brand-2 underline" onClick={() => setF((x) => ({ ...x, current_address: regAddress }))}>เหมือนที่อยู่ตามทะเบียน</button>}</span>} wide>
+            <Input {...bind("current_address")} placeholder="ว่าง = อยู่ตามที่อยู่ทะเบียน" />
+          </Field>
         </Grid>
       </Section>
 

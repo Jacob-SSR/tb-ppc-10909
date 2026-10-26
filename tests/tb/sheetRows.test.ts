@@ -8,7 +8,7 @@ test("toSheetRow ผู้ป่วย: ลำดับหัวเดิม, �
   const extra = { ...legacyFollowupExtra([{ slot: 2, result: "NEG" }]), updated_by_name: "ผู้ดูแล" };
   const iso = toSheetRow("patient", row, { dateFormat: "iso", unitName: (id) => (id === 2 ? "รพ.สต.ตาพระ" : ""), extra });
   const at = (h: string) => iso[PATIENT_SHEET_COLUMNS.findIndex((c) => c[0] === h)];
-  assert.equal(iso.length, 38);
+  assert.equal(iso.length, PATIENT_SHEET_COLUMNS.length);
   assert.equal(at("รหัสระบบ"), "P0123456789");
   assert.equal(at("วันเริ่มยา"), "2026-01-15");
   assert.equal(at("รพ.สต.รับผิดชอบ"), "รพ.สต.ตาพระ");

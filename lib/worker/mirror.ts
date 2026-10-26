@@ -4,6 +4,8 @@
 //                  → upsert ตาม id (มี = ทับแถว, ไม่มี = ต่อท้าย) ด้วย values.batchUpdate, ถูกลบ = ลบแถว
 //                  → สำเร็จเท่านั้นจึง set sent_at; ล้มเหลว → attempts++ และ next_try_at แบบ backoff
 //   rebuild:       เขียนทุกแท็บใหม่ทั้งหมดจาก MySQL (ตาข่ายกันหลุด ทุกคืน 02:00)
+//   ตัวกัน:        ถ้าใน Sheet มีแถวที่ไม่มีใน MySQL (ยังไม่ได้ import / มีคนพิมพ์เพิ่มเอง) จะไม่เขียนอะไรเลย
+//                  — rebuild ล้างแท็บแล้วเขียนจาก MySQL ใหม่ ถ้าปล่อยไปข้อมูลจริงใน Sheet จะหาย
 //
 // แท็บและหัวคอลัมน์เดิม (DB_Patients/DB_Contacts/DB_Visits) + แท็บใหม่ DB_Followups
 // ppc-hos (tb-dashboard / tb-map) อ่านแท็บที่ชื่อมี "patient" จึงใช้ต่อได้โดยไม่ต้องแก้
@@ -11,7 +13,7 @@ import type { Queryable } from "../audit.ts";
 import { redis } from "../redis.ts";
 import type { Row } from "../repo/common.ts";
 import { COLUMNS, legacyFollowupExtra, toSheetRow, type SheetKind } from "../tb/sheetRows.ts";
-import { quote, type SheetApi } from "./sheetApi.ts";
+import { PROTECT_DESC, quote, type SheetApi } from "./sheetApi.ts";
 
 export const TABS: Record<SheetKind, string> = {
   patient: "DB_Patients",
@@ -21,6 +23,20 @@ export const TABS: Record<SheetKind, string> = {
 };
 const ORDER: SheetKind[] = ["patient", "contact", "visit", "followup"];
 const BATCH = 200;
+const TABLE: Partial<Record<SheetKind, string>> = { patient: "tb_patients", contact: "tb_contacts", visit: "tb_visits" };
+const SAFE_KEY = "tb:sheet:safe";
+
+/** Sheet ยังมีข้อมูลที่ไม่ได้อยู่ใน MySQL — ห้ามเขียนทับ */
+export class MirrorBlocked extends Error {
+  foreign: Record<string, number>;
+  constructor(foreign: Record<string, number>) {
+    super(
+      `Google Sheet มีแถวที่ยังไม่อยู่ในฐานข้อมูล (${Object.entries(foreign).map(([t, n]) => `${t} ${n} แถว`).join(", ")}) ` +
+      "— หยุดเขียน Sheet ไว้ก่อนเพื่อไม่ให้ข้อมูลหาย: นำเข้าด้วย scripts/import-from-sheet.ts หรือลบแถวนั้นออกจาก Sheet",
+    );
+    this.foreign = foreign;
+  }
+}
 
 export function colLetter(n: number): string {
   let s = "";
@@ -49,7 +65,8 @@ export class Mirror {
 
   // ── แท็บ + หัวคอลัมน์ + ป้องกันแก้มือ ─────────────────────────────────────────
 
-  async ensureTabs(serviceAccount?: string): Promise<void> {
+  /** protect = ล็อกแท็บ DB_* ให้แก้ได้เฉพาะ service account (SHEET_PROTECT=1); false = ถอดล็อกที่ระบบเคยใส่ */
+  async ensureTabs(serviceAccount?: string, protect = false): Promise<void> {
     let tabs = await this.api.tabs();
     const missing = ORDER.filter((k) => !tabs.some((t) => t.title === TABS[k]));
     if (missing.length) {
@@ -60,21 +77,60 @@ export class Mirror {
     const fix = ORDER.filter((k, i) => (headers[i][0] ?? []).join("|") !== COLUMNS[k].map(([h]) => h).join("|"));
     await this.api.write(fix.map((k) => ({ range: `${quote(TABS[k])}!A1:${lastCol(k)}1`, values: [COLUMNS[k].map(([h]) => h)] })));
 
-    // Sheet อ่านอย่างเดียวสำหรับคน — แก้ได้เฉพาะ service account (§7)
+    const ours = ORDER.map((k) => tabs.find((t) => t.title === TABS[k])!);
+    if (!protect) {
+      await this.api.batch(ours.flatMap((t) => t.ourProtections.map((protectedRangeId) => ({ deleteProtectedRange: { protectedRangeId } }))));
+      return;
+    }
+    // ล็อกให้แก้ได้เฉพาะ service account (เปิดด้วย SHEET_PROTECT=1)
     if (serviceAccount) {
-      const req = ORDER.map((k) => tabs.find((t) => t.title === TABS[k])!)
+      const req = ours
         .filter((t) => !t.protectedBy.includes(serviceAccount))
         .map((t) => ({
           addProtectedRange: {
             protectedRange: {
               range: { sheetId: t.sheetId },
-              description: "เขียนโดยระบบทะเบียนวัณโรคเท่านั้น — แก้ข้อมูลที่เว็บแอป",
+              description: PROTECT_DESC,
               editors: { users: [serviceAccount] },
             },
           },
         }));
       await this.api.batch(req);
     }
+  }
+
+  // ── ตัวกันข้อมูลใน Sheet หาย ───────────────────────────────────────────────
+
+  /** จำนวนแถวต่อแท็บที่ id ไม่มีใน MySQL (รวมที่ลบแล้ว) หรือไม่มี id แต่มีข้อมูล */
+  async foreignRows(): Promise<Record<string, number>> {
+    const out: Record<string, number> = {};
+    for (const kind of ["patient", "contact", "visit"] as const) {
+      const vals = await this.api.get(`${quote(TABS[kind])}!A2:D`);
+      const rows = vals.filter((r) => r.some((v) => String(v ?? "").trim()));
+      const ids = [...new Set(rows.map((r) => String(r[0] ?? "").trim()).filter(Boolean))];
+      const known = new Set<string>();
+      for (let i = 0; i < ids.length; i += 500) {
+        const part = ids.slice(i, i + 500);
+        const [found] = await this.db.query<Row[]>(`SELECT id FROM ${TABLE[kind]} WHERE id IN (${part.map(() => "?").join(",")})`, part);
+        for (const f of found) known.add(String(f.id));
+      }
+      const n = rows.filter((r) => !known.has(String(r[0] ?? "").trim())).length;
+      if (n) out[TABS[kind]] = n;
+    }
+    return out;
+  }
+
+  /** โยน MirrorBlocked ถ้าเขียนแล้วข้อมูลใน Sheet จะหาย — ผลที่ปลอดภัยจำไว้ 10 นาที (ลดการอ่าน Sheet) */
+  async assertSafe(useCache = true): Promise<void> {
+    if (useCache) {
+      try { if (await redis.get(SAFE_KEY)) return; } catch { /* อ่านจาก Sheet */ }
+    }
+    const foreign = await this.foreignRows();
+    if (Object.keys(foreign).length) {
+      try { await redis.del(SAFE_KEY); } catch { /* ignore */ }
+      throw new MirrorBlocked(foreign);
+    }
+    try { await redis.set(SAFE_KEY, "1", "EX", 600); } catch { /* ignore */ }
   }
 
   // ── id → เลขแถว (cache ใน Redis, ไม่มีให้อ่านคอลัมน์ A ใหม่) ───────────────────
@@ -205,11 +261,18 @@ export class Mirror {
   }
 
   /** ทำคิวที่ถึงเวลา — คืนจำนวนที่ส่งสำเร็จ/ล้มเหลว */
-  async processOutbox(limit = BATCH): Promise<{ sent: number; failed: number }> {
+  async processOutbox(limit = BATCH): Promise<{ sent: number; failed: number; blocked?: string }> {
     const [rows] = await this.db.query<Row[]>(
       "SELECT id, entity, entity_id FROM tb_sheet_outbox WHERE sent_at IS NULL AND next_try_at <= NOW() ORDER BY id LIMIT ?",
       [limit],
     );
+    if (!rows.length) return { sent: 0, failed: 0 };
+    try {
+      await this.assertSafe();
+    } catch (err) {
+      if (err instanceof MirrorBlocked) return { sent: 0, failed: 0, blocked: err.message }; // คิวคงไว้ ส่งหลัง import
+      throw err;
+    }
     let sent = 0;
     let failed = 0;
     for (const kind of ORDER) {
@@ -237,6 +300,7 @@ export class Mirror {
 
   /** เขียนทุกแท็บใหม่ทั้งหมดจาก MySQL แล้วปิดคิวที่ค้างก่อนเริ่ม (แถวล่าสุดอยู่ใน Sheet แล้ว) */
   async rebuild(): Promise<Record<string, number>> {
+    await this.assertSafe(false);
     const [[snap]] = await this.db.query<Row[]>("SELECT COALESCE(MAX(id), 0) AS max FROM tb_sheet_outbox");
     const counts: Record<string, number> = {};
     for (const kind of ORDER) {

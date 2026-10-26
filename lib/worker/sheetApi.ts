@@ -1,12 +1,18 @@
 // lib/worker/sheetApi.ts — ส่วนที่ mirror ใช้จาก Google Sheets API (แยกเป็น interface ให้ทดสอบด้วยตัวปลอมได้)
+import { isOurLock, PROTECT_DESC } from "../sheetLocks.ts";
 import { getSheets, spreadsheetId } from "../sheets.ts";
+
+export { PROTECT_DESC };
 
 export interface TabInfo {
   title: string;
   sheetId: number;
   rowCount: number;
   protectedBy: string[]; // editors ของ protected range ที่ครอบทั้งแท็บ (ว่าง = ยังไม่ป้องกัน)
+  /** protectedRangeId ที่ระบบนี้ใส่เอง (ดูจาก description) — ใช้ถอดล็อก */
+  ourProtections: number[];
 }
+
 
 export interface SheetApi {
   tabs(): Promise<TabInfo[]>;
@@ -15,7 +21,7 @@ export interface SheetApi {
   /** เขียนหลายช่วงในครั้งเดียว (values.batchUpdate, RAW = เก็บเป็นข้อความตามเดิม) */
   write(data: { range: string; values: string[][] }[]): Promise<void>;
   clear(range: string): Promise<void>;
-  /** addSheet / deleteDimension / appendDimension / addProtectedRange */
+  /** addSheet / deleteDimension / appendDimension / addProtectedRange / deleteProtectedRange */
   batch(requests: object[]): Promise<void>;
 }
 
@@ -28,7 +34,7 @@ export function googleSheetApi(): SheetApi {
     async tabs() {
       const meta = await sheets.spreadsheets.get({
         spreadsheetId: id,
-        fields: "sheets(properties(title,sheetId,gridProperties.rowCount),protectedRanges(range,editors))",
+        fields: "sheets(properties(title,sheetId,gridProperties.rowCount),protectedRanges(protectedRangeId,description,range,editors))",
       });
       return (meta.data.sheets ?? []).map((s) => ({
         title: s.properties!.title!,
@@ -37,6 +43,7 @@ export function googleSheetApi(): SheetApi {
         protectedBy: (s.protectedRanges ?? [])
           .filter((p) => p.range && p.range.startRowIndex == null && p.range.startColumnIndex == null)
           .flatMap((p) => p.editors?.users ?? []),
+        ourProtections: (s.protectedRanges ?? []).filter((p) => isOurLock(p, process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL)).map((p) => p.protectedRangeId!),
       }));
     },
     async get(range) {

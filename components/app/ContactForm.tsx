@@ -9,6 +9,7 @@ import { OPTIONS } from "@/lib/tb/options";
 import { patientStart } from "@/lib/tb/tasks";
 import { api, ApiError } from "./api";
 import { Tel, TaskLine, th } from "./bits";
+import { useHosxp } from "./hosxp";
 import { useApp } from "./store";
 import { Timeline } from "./Timeline";
 import type { Contact } from "./types";
@@ -43,6 +44,11 @@ export function ContactForm({ contact }: { contact: Partial<Contact> }) {
   const start = patientStart(p);
   const back = () => (p ? open({ type: "patient", id: p.id }) : open(null));
   const unitOpts = data.units.map((u) => ({ value: u.id, label: u.name }));
+  // HOSxP เฉพาะทีม รพ. (มีข้อมูลทั้งโรงพยาบาล — CLAUDE.md §12 ข้อ 8): HN / เลขบัตร → เติมช่องว่างให้เอง
+  const hosxpOn = data.features.hosxp && isAdmin && canEdit;
+  const hx = useHosxp(hosxpOn, f, setF, (r) => ({
+    hn: r.hn, name: r.name, cid: r.cid, sex: r.sex, age: r.age, phone: r.phone, address: r.fullAddress,
+  }));
 
   async function save() {
     if (!f.name.trim()) return toast("กรุณากรอกชื่อผู้สัมผัส", "bad");
@@ -126,8 +132,15 @@ export function ContactForm({ contact }: { contact: Partial<Contact> }) {
           </Field>
           <Field label="ความสัมพันธ์กับผู้ป่วย"><ComboInput listId="dl-rel" options={OPTIONS.relation} {...bind("relation")} /></Field>
           <Field label={<>โทรศัพท์ {f.phone && <Tel phone={f.phone} />}</>}><Input type="tel" inputMode="tel" {...bind("phone")} /></Field>
-          <Field label="เลขบัตรประชาชน"><Input inputMode="numeric" maxLength={17} {...bind("cid")} /></Field>
-          <Field label="HN"><Input {...bind("hn")} /></Field>
+          <Field label="เลขบัตรประชาชน">
+            <Input inputMode="numeric" maxLength={17} {...bind("cid")} onBlur={() => isNew && !f.hn.trim() && hx.lookup({ cid: f.cid }, false)} />
+          </Field>
+          <Field label="HN">
+            <div className="flex gap-2">
+              <Input {...bind("hn")} onBlur={() => isNew && hx.lookup({ hn: f.hn }, false)} />
+              {hosxpOn && <Button variant="ghost" size="sm" disabled={hx.loading} onClick={() => hx.lookup({ hn: f.hn, cid: f.cid }, true)} className="flex-none">{hx.loading ? "กำลังดึง…" : "ดึงจาก HOSxP"}</Button>}
+            </div>
+          </Field>
           <Field label="เพศ"><Select options={OPTIONS.sex} {...bind("sex")} /></Field>
           <Field label="อายุ (ปี)"><Input type="number" min={0} max={150} {...bind("age")} /></Field>
           <Field label="วงรัศมี (1 ร่วมบ้าน / 2 10–50 ม. / 3 100–200 ม.)"><Select options={OPTIONS.ring} {...bind("ring")} /></Field>
