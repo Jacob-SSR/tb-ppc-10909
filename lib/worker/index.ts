@@ -75,8 +75,10 @@ async function tick() {
     const sheets = sheetsConfigured();
     const mirror = sheets ? new Mirror(googleSheetApi(), tbDb) : null;
 
-    if (mirror && (await once(`sheet-setup:${process.env.TB_SPREADSHEET_ID}`, 24 * 3600))) {
-      await mirror.ensureTabs(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL, process.env.SHEET_PROTECT === "1").catch((e) => log("ensureTabs ล้มเหลว:", e.message));
+    const protect = process.env.SHEET_PROTECT === "1";
+    // กุญแจรวมค่า protect → เปลี่ยนค่าแล้ว deploy ใหม่ ล็อก/ถอดล็อกทันที ไม่ต้องรอ 24 ชม.
+    if (mirror && (await once(`sheet-setup:${process.env.TB_SPREADSHEET_ID}:${protect ? "lock" : "open"}`, 24 * 3600))) {
+      await mirror.ensureTabs(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL, protect).catch((e) => log("ensureTabs ล้มเหลว:", e.message));
     }
     if (mirror) {
       const r = await mirror.processOutbox();
