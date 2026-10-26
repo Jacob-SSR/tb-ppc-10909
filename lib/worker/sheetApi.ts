@@ -1,5 +1,8 @@
 // lib/worker/sheetApi.ts — ส่วนที่ mirror ใช้จาก Google Sheets API (แยกเป็น interface ให้ทดสอบด้วยตัวปลอมได้)
+import { isOurLock, PROTECT_DESC } from "../sheetLocks.ts";
 import { getSheets, spreadsheetId } from "../sheets.ts";
+
+export { PROTECT_DESC };
 
 export interface TabInfo {
   title: string;
@@ -10,8 +13,6 @@ export interface TabInfo {
   ourProtections: number[];
 }
 
-/** ป้ายของ protected range ที่ระบบใส่ (SHEET_PROTECT=1) */
-export const PROTECT_DESC = "เขียนโดยระบบทะเบียนวัณโรคเท่านั้น — แก้ข้อมูลที่เว็บแอป";
 
 export interface SheetApi {
   tabs(): Promise<TabInfo[]>;
@@ -42,7 +43,7 @@ export function googleSheetApi(): SheetApi {
         protectedBy: (s.protectedRanges ?? [])
           .filter((p) => p.range && p.range.startRowIndex == null && p.range.startColumnIndex == null)
           .flatMap((p) => p.editors?.users ?? []),
-        ourProtections: (s.protectedRanges ?? []).filter((p) => p.description === PROTECT_DESC).map((p) => p.protectedRangeId!),
+        ourProtections: (s.protectedRanges ?? []).filter((p) => isOurLock(p, process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL)).map((p) => p.protectedRangeId!),
       }));
     },
     async get(range) {
