@@ -6,7 +6,12 @@ export interface TabInfo {
   sheetId: number;
   rowCount: number;
   protectedBy: string[]; // editors ของ protected range ที่ครอบทั้งแท็บ (ว่าง = ยังไม่ป้องกัน)
+  /** protectedRangeId ที่ระบบนี้ใส่เอง (ดูจาก description) — ใช้ถอดล็อก */
+  ourProtections: number[];
 }
+
+/** ป้ายของ protected range ที่ระบบใส่ (SHEET_PROTECT=1) */
+export const PROTECT_DESC = "เขียนโดยระบบทะเบียนวัณโรคเท่านั้น — แก้ข้อมูลที่เว็บแอป";
 
 export interface SheetApi {
   tabs(): Promise<TabInfo[]>;
@@ -15,7 +20,7 @@ export interface SheetApi {
   /** เขียนหลายช่วงในครั้งเดียว (values.batchUpdate, RAW = เก็บเป็นข้อความตามเดิม) */
   write(data: { range: string; values: string[][] }[]): Promise<void>;
   clear(range: string): Promise<void>;
-  /** addSheet / deleteDimension / appendDimension / addProtectedRange */
+  /** addSheet / deleteDimension / appendDimension / addProtectedRange / deleteProtectedRange */
   batch(requests: object[]): Promise<void>;
 }
 
@@ -28,7 +33,7 @@ export function googleSheetApi(): SheetApi {
     async tabs() {
       const meta = await sheets.spreadsheets.get({
         spreadsheetId: id,
-        fields: "sheets(properties(title,sheetId,gridProperties.rowCount),protectedRanges(range,editors))",
+        fields: "sheets(properties(title,sheetId,gridProperties.rowCount),protectedRanges(protectedRangeId,description,range,editors))",
       });
       return (meta.data.sheets ?? []).map((s) => ({
         title: s.properties!.title!,
@@ -37,6 +42,7 @@ export function googleSheetApi(): SheetApi {
         protectedBy: (s.protectedRanges ?? [])
           .filter((p) => p.range && p.range.startRowIndex == null && p.range.startColumnIndex == null)
           .flatMap((p) => p.editors?.users ?? []),
+        ourProtections: (s.protectedRanges ?? []).filter((p) => p.description === PROTECT_DESC).map((p) => p.protectedRangeId!),
       }));
     },
     async get(range) {

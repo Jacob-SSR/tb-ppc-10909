@@ -182,7 +182,7 @@ export function SettingsTab() {
   );
 }
 
-interface SheetState { pending: number; oldest: string | null; last_error: string | null; last_sent: string | null }
+interface SheetState { pending: number; oldest: string | null; last_error: string | null; last_sent: string | null; blocked: string | null }
 
 function SheetStatus() {
   const [st, setSt] = useState<SheetState | null>(null);
@@ -204,16 +204,17 @@ function SheetStatus() {
   }
   return (
     <Section title="Google Sheet (สำเนาสำหรับดู — ระบบเขียนให้อัตโนมัติ)">
+      {st?.blocked && <p className="mb-2 rounded-xl bg-bad-bg p-3 text-sm text-bad">⛔ {st.blocked}</p>}
       {!st ? <Spinner /> : (
         <div className="flex flex-wrap items-center gap-2 text-sm">
           {Number(st.pending) ? <Badge tone="warn">รอส่ง {st.pending} รายการ</Badge> : <Badge tone="ok">ส่งครบแล้ว</Badge>}
           {st.last_sent && <span className="text-muted">ส่งล่าสุด {String(st.last_sent).slice(0, 16)}</span>}
           {st.last_error && <span className="text-bad">ผิดพลาดล่าสุด: {st.last_error}</span>}
           <span className="flex-1" />
-          <Button size="sm" variant="ghost" onClick={rebuild} disabled={busy}>{busy ? "กำลังเขียน…" : "เขียน Sheet ใหม่ทั้งหมดตอนนี้"}</Button>
+          <Button size="sm" variant="ghost" onClick={rebuild} disabled={busy || !!st.blocked}>{busy ? "กำลังเขียน…" : "เขียน Sheet ใหม่ทั้งหมดตอนนี้"}</Button>
         </div>
       )}
-      <p className="mt-2 text-xs text-muted">ส่งทุก 1 นาที · เขียนใหม่ทั้งหมดทุกคืน 02:00 · ค้างเกิน 1 ชม. แจ้ง LINE · แก้ข้อมูลที่เว็บนี้เท่านั้น (Sheet ถูกล็อกไม่ให้แก้มือ)</p>
+      <p className="mt-2 text-xs text-muted">ส่งทุก 1 นาที · เขียนใหม่ทั้งหมดทุกคืน 02:00 · ค้างเกิน 1 ชม. แจ้ง LINE · แก้ข้อมูลที่เว็บนี้ (แก้ใน Sheet จะถูกเขียนทับรอบถัดไป)</p>
     </Section>
   );
 }

@@ -11,6 +11,7 @@ import { isConcluded } from "@/lib/tb/tasks";
 import { isRR, th, useAppointments } from "./bits";
 import { ChartCanvas, COL, OUTCOME_COL, PALETTE } from "./Chart";
 import { useApp } from "./store";
+import { exportDashWord } from "./wordExports";
 
 function GoalCard({ r }: { r: IndicatorResult }) {
   const def = INDICATORS.find((i) => i.id === r.id)!;
@@ -80,7 +81,8 @@ const legendRight = { display: true, position: "right" as const, labels: { boxWi
 const countAxis = { beginAtZero: true, ticks: { precision: 0 } };
 
 export function DashboardTab() {
-  const { data, fy, open } = useApp();
+  const store = useApp();
+  const { data, fy, open } = store;
   const appts = useAppointments();
   const [q, setQ] = useState<PeriodQuarter>(0);
   const [mode, setMode] = useState<"quarter" | "ytd">("quarter");
@@ -123,6 +125,8 @@ export function DashboardTab() {
         </div>
         <div className="flex items-center gap-2.5">
           <button onClick={() => document.dispatchEvent(new CustomEvent("tb:tab", { detail: "settings" }))} className="rounded-lg border border-white/40 bg-white/20 px-3 py-1.5 text-sm hover:bg-white/30">⚙ ตั้งเป้าหมาย</button>
+          <button onClick={() => exportDashWord(store, P, `${PERIOD_LABEL[q]}${q ? (mode === "ytd" ? " (สะสม)" : " (เฉพาะ 3 เดือน)") : ""} ${formatThaiDate(range.from)} – ${formatThaiDate(range.to)}`)}
+            className="rounded-lg border border-white/40 bg-white/20 px-3 py-1.5 text-sm hover:bg-white/30">📄 ส่งออก Word</button>
           <div className="rounded-[14px] border border-white/30 bg-white/15 px-4 py-2 text-center text-xs leading-tight">
             <span>ผู้ป่วย</span><b className="block text-[26px]">{P.length}</b><span>ผู้สัมผัส {contactCount}</span>
           </div>

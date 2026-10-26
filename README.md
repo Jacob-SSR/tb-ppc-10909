@@ -77,7 +77,24 @@ curl http://127.0.0.1:3010/api/health                                    # {"ok"
 3. ใส่ `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY` (ใส่ `\n` แทนขึ้นบรรทัด), `TB_SPREADSHEET_ID` ใน `.env.production` แล้ว `docker compose up -d`
 
 ระบบเขียนแท็บ `DB_Patients` / `DB_Contacts` / `DB_Visits` (หัวคอลัมน์เดิม) + `DB_Followups` ทุก 1 นาที, เขียนใหม่ทั้งหมดทุกคืน 02:00
-และล็อกแท็บเหล่านี้ให้แก้ได้เฉพาะ service account (แก้ข้อมูลที่เว็บเท่านั้น) · ดูสถานะ/สั่งเขียนใหม่ได้ที่แท็บ "ตั้งเป้าหมาย"
+· ดูสถานะ/สั่งเขียนใหม่ได้ที่แท็บ "ตั้งเป้าหมาย" · ไม่ล็อกแท็บ (ถ้าต้องการล็อกให้แก้ได้เฉพาะ service account ใส่ `SHEET_PROTECT=1`)
+
+**ตัวกันข้อมูลหาย**: ถ้าใน Sheet มีแถวที่ยังไม่อยู่ใน MySQL (ยังไม่ได้ import หรือมีคนพิมพ์เพิ่มใน Sheet) ระบบจะ**หยุดเขียน Sheet ทั้งหมด**
+และแสดงเหตุผลที่แท็บ "ตั้งเป้าหมาย" (+ LINE) จนกว่าจะ import ข้อมูลนั้นเข้าระบบ หรือลบแถวนั้นออก — คิวที่ค้างจะส่งต่อเองหลังจากนั้น
+
+### ย้ายข้อมูลจริงจาก Google Sheet เข้าระบบ (ครั้งแรก — รันซ้ำได้)
+
+Sheet → ไฟล์ → ดาวน์โหลด → Microsoft Excel (.xlsx) → วางไว้ในโฟลเดอร์โปรเจกต์ชื่อ `Tuberculosis.xlsx` (`*.xlsx` อยู่ใน .gitignore ไม่หลุดขึ้น git)
+
+```bash
+docker compose build cli
+# Git Bash บน Windows ต้องมี MSYS_NO_PATHCONV=1 และใช้ $(pwd -W) — บน Linux ใช้ $PWD
+MSYS_NO_PATHCONV=1 docker compose run --rm -v "$(pwd -W)/Tuberculosis.xlsx:/import/tb.xlsx:ro" cli \
+  node scripts/import-from-sheet.ts --xlsx /import/tb.xlsx --as admin --dry   # ดูรายงานก่อน (ไม่บันทึก)
+# รายงานถูกต้อง → รันคำสั่งเดิมอีกครั้งโดยตัด --dry ออก แล้วลบไฟล์ .xlsx ทิ้ง
+```
+
+หรืออ่านจาก Sheet ตรงด้วย service account (ตั้ง `GOOGLE_*` + `TB_SPREADSHEET_ID` แล้ว): `docker compose run --rm cli node scripts/import-from-sheet.ts --as admin --dry`
 
 ### แจ้งเตือนนัดทุกเช้า 07:00
 

@@ -7,6 +7,7 @@ import { addDays, diffDays, formatThaiDate } from "@/lib/tb/dates";
 import { Tel, th, useAppointments } from "./bits";
 import { useApp, type DueItem } from "./store";
 import type { Contact, Patient } from "./types";
+import { exportApptWord, exportDueWord } from "./wordExports";
 
 function Row({ date, late, tone, title, kind, sub, onClick }: {
   date: string; late?: number; tone: "late" | "soon" | "later"; title: React.ReactNode; kind: "P" | "C"; sub: React.ReactNode; onClick: () => void;
@@ -50,7 +51,8 @@ function useRefLookup() {
 }
 
 export function AppointmentsTab() {
-  const { data, isAdmin } = useApp();
+  const store = useApp();
+  const { data, isAdmin, unitName } = store;
   const all = useAppointments();
   const lookup = useRefLookup();
   const [unit, setUnit] = useState("");
@@ -85,6 +87,11 @@ export function AppointmentsTab() {
             <button key={v} onClick={() => setView(v)} className={`px-3 py-2 text-sm ${view === v ? "bg-brand text-white" : "bg-white text-brand"}`}>{v === "list" ? "☰ รายการ" : "📅 ปฏิทิน"}</button>
           ))}
         </div>
+        <Button variant="ghost" size="sm" disabled={!items.length} onClick={() => exportApptWord(
+          store,
+          groups.map(([title, list]) => [title, list.map((x) => ({ appt: x.a.appt, kind: x.a.kind, rec: x.r.rec, last: x.a.last }))]),
+          unit ? unitName(Number(unit)) : isAdmin ? "" : data.user.unitName,
+        )}>📄 ส่งออก Word</Button>
       </div>
       {!items.length && <Empty>ยังไม่มีนัดหมาย · ใส่ &quot;วันนัดครั้งถัดไป&quot; ตอนบันทึกการรักษาในหน้าผู้ป่วยหรือผู้สัมผัส</Empty>}
       {view === "list"
@@ -152,7 +159,8 @@ function Calendar<T extends { a: Appointment; r: { rec: { name: string } } }>({ 
 }
 
 export function DueTab() {
-  const { data, isAdmin, allDue, unitName } = useApp();
+  const store = useApp();
+  const { data, isAdmin, allDue, unitName } = store;
   const lookup = useRefLookup();
   const [unit, setUnit] = useState("");
   const horizon = addDays(data.today, 30);
@@ -167,6 +175,8 @@ export function DueTab() {
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <p className="flex-1 text-sm text-muted">งานที่ถึงกำหนดภายใน 30 วัน และงานที่เกินกำหนด (ทุกปีงบ){!isAdmin ? ` · ${data.user.unitName}` : ""}</p>
+        <Button variant="ghost" size="sm" disabled={!items.length}
+          onClick={() => exportDueWord(store, items, unit ? unitName(Number(unit)) : isAdmin ? "" : data.user.unitName)}>📄 ส่งออก Word (ใช้ลงพื้นที่)</Button>
         {isAdmin && <Select className="w-auto" options={data.units.map((u) => ({ value: u.id, label: u.name }))} placeholder="ทุกหน่วย" value={unit} onChange={(e) => setUnit(e.target.value)} />}
       </div>
       {!items.length && <Empty>ไม่มีงานค้าง 🎉</Empty>}

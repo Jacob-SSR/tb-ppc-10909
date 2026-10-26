@@ -76,14 +76,18 @@ async function tick() {
     const mirror = sheets ? new Mirror(googleSheetApi(), tbDb) : null;
 
     if (mirror && (await once(`sheet-setup:${process.env.TB_SPREADSHEET_ID}`, 24 * 3600))) {
-      await mirror.ensureTabs(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL).catch((e) => log("ensureTabs ล้มเหลว:", e.message));
+      await mirror.ensureTabs(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL, process.env.SHEET_PROTECT === "1").catch((e) => log("ensureTabs ล้มเหลว:", e.message));
     }
     if (mirror) {
       const r = await mirror.processOutbox();
       if (r.sent || r.failed) log(`outbox ส่งแล้ว ${r.sent} ล้มเหลว ${r.failed}`);
+      if (r.blocked && (await once("sheet-blocked-log", 3600))) {
+        log(r.blocked);
+        if (lineConfigured() && (await once("sheet-blocked-line", 6 * 3600))) await sendLine(`⚠ ระบบทะเบียนวัณโรค: ${r.blocked}`);
+      }
     }
     if (mirror && h === 2 && (await once(`rebuild:${today}`, 26 * 3600))) {
-      log("rebuild Sheet:", await mirror.rebuild());
+      log("rebuild Sheet:", await mirror.rebuild().catch((e: Error) => e.message));
     }
     if (h === 7 && (await once(`reminder:${today}`, 26 * 3600))) {
       log("แจ้งนัด:", await sendDailyReminder(tbDb, today));

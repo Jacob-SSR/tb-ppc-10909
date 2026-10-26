@@ -1,0 +1,8 @@
+# ให้คำสั่ง mysql / mysqldump ใน container ส่งภาษาไทยเป็น utf8mb4
+# (ค่าเริ่มต้นของ client ใน image คือ latin1 → ข้อความไทยที่พิมพ์ผ่าน `docker compose exec mysql mysql ...` จะเพี้ยน)
+[client]
+default-character-set = utf8mb4
+[mysql]
+default-character-set = utf8mb4
+[mysqldump]
+default-character-set = utf8mb4
