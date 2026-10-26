@@ -17,6 +17,7 @@ export interface HosxpResult {
   area: string | null;
   amphoe: string | null;
   province: string | null;
+  postcode: string | null;
   fullAddress: string | null;
   phone: string | null;
   deceased: boolean;

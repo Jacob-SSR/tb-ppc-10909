@@ -45,10 +45,9 @@ test("contactTypeFromLabel: ค่าใน Sheet เดิม → household/clo
 });
 
 test("หัวคอลัมน์ Sheet เดิมครบและไม่ซ้ำ", () => {
-  // 38 คอลัมน์เดิมตามลำดับเดิม + "ที่อยู่ปัจจุบัน" ต่อท้าย (ไม่ให้คอลัมน์เดิมเลื่อน)
-  assert.equal(PATIENT_SHEET_COLUMNS.length, 39);
+  // 38 คอลัมน์เดิมตามลำดับเดิม + คอลัมน์ใหม่ต่อท้าย (ไม่ให้คอลัมน์เดิมเลื่อน)
   assert.equal(PATIENT_SHEET_COLUMNS[37][0], "แก้ไขเมื่อ");
-  assert.equal(PATIENT_SHEET_COLUMNS[38][0], "ที่อยู่ปัจจุบัน");
+  assert.deepEqual(PATIENT_SHEET_COLUMNS.slice(38).map((c) => c[0]), ["ที่อยู่ปัจจุบัน", "อำเภอ", "จังหวัด", "รหัสไปรษณีย์"]);
   assert.equal(CONTACT_SHEET_COLUMNS.length, 39);
   assert.equal(VISIT_SHEET_COLUMNS.length, 8);
   for (const cols of [PATIENT_SHEET_COLUMNS, CONTACT_SHEET_COLUMNS, VISIT_SHEET_COLUMNS]) {

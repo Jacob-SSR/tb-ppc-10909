@@ -39,6 +39,11 @@ export const cid = z.preprocess(
   z.string().regex(/^\d{13}$/, "เลขบัตรประชาชนต้องเป็นตัวเลข 13 หลัก").nullable(),
 );
 
+const postcode = z.preprocess(
+  (v) => (blank(v) ? null : String(v).replace(/\s/g, "")),
+  z.string().regex(/^\d{5}$/, "รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก").nullable(),
+);
+
 const sex = z.preprocess((v) => (blank(v) ? null : String(v).trim()), z.enum(["ชาย", "หญิง"]).nullable());
 
 const id = (prefix: string) => z.string().regex(new RegExp(`^${prefix}[0-9a-f]{10}$`), "รหัสระบบไม่ถูกต้อง");
@@ -66,6 +71,9 @@ export const patientFields = {
   age: intIn(0, 150),
   address: text(200),
   area: text(100),
+  amphoe: text(100),
+  province: text(100),
+  postcode,
   current_address: text(200),
   unit_id: intIn(1, 65535),
   phone: text(30),

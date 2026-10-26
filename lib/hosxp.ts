@@ -18,6 +18,7 @@ export interface HosxpPatient {
   area: string | null; // ตำบล
   amphoe: string | null;
   province: string | null;
+  postcode: string | null;
   /** ที่อยู่ตามทะเบียนเต็ม: บ้านเลขที่ หมู่ ถนน ต. อ. จ. */
   fullAddress: string | null;
   phone: string | null;
@@ -63,7 +64,7 @@ async function addressNames(chw: string, amp: string, tmb: string) {
 
 export async function findHosxpPatient(by: { hn?: string; cid?: string }): Promise<HosxpPatient | null> {
   const key = by.hn ? `hn:${by.hn}` : `cid:${by.cid}`;
-  const cacheKey = `tb:hosxp:v2:${key}`;
+  const cacheKey = `tb:hosxp:v3:${key}`;
   try {
     const hit = await redis.get(cacheKey);
     if (hit) return JSON.parse(hit);
@@ -86,8 +87,10 @@ export async function findHosxpPatient(by: { hn?: string; cid?: string }): Promi
   const road = pick(r, "road");
   const address = [pick(r, "addrpart"), moo && moo !== "0" ? `หมู่ ${moo}` : "", road && road !== "-" ? `ถนน${road}` : ""].filter(Boolean).join(" ") || null;
   const names = await addressNames(pick(r, "chwpart"), pick(r, "amppart"), pick(r, "tmbpart"));
+  const po = pick(r, "po_code", "postcode", "zipcode", "zip_code");
+  const postcode = /^\d{5}$/.test(po) ? po : null;
   const fullAddress = [
-    address, names.tambon && `ต.${names.tambon}`, names.amphoe && `อ.${names.amphoe}`, names.province && `จ.${names.province}`,
+    address, names.tambon && `ต.${names.tambon}`, names.amphoe && `อ.${names.amphoe}`, names.province && `จ.${names.province}`, postcode,
   ].filter(Boolean).join(" ") || null;
   const out: HosxpPatient = {
     hn: pick(r, "hn"),
@@ -101,6 +104,7 @@ export async function findHosxpPatient(by: { hn?: string; cid?: string }): Promi
     area: names.tambon,
     amphoe: names.amphoe,
     province: names.province,
+    postcode,
     fullAddress,
     phone: pick(r, "mobile_phone_number", "hometel", "informtel") || null,
     deceased: pick(r, "death") === "Y" || !!pick(r, "deathday"),

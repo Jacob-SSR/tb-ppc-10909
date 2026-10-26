@@ -52,7 +52,7 @@
 
 - `tb_units` หน่วยบริการ 7 แห่ง (`admin` = รพ.พลับพลาชัย, `unit` = รพ.สต.)
 - `tb_users` ผู้ใช้รายคน ผูกหน่วย
-- `tb_patients` ผู้ป่วย index — **คง id เดิมรูปแบบ `P` + 10 hex** เพื่อ import ตรง · มี `current_address` (migration 004, ต่อท้าย DB_Patients ใน Sheet)
+- `tb_patients` ผู้ป่วย index — **คง id เดิมรูปแบบ `P` + 10 hex** เพื่อ import ตรง · มี `current_address` (migration 004) และ `amphoe`/`province`/`postcode` (migration 005) — ต่อท้าย DB_Patients ใน Sheet
 - `tb_treatment_followups` ติดตามระหว่างรักษา หมวด 4 สูงสุด 12 ช่องต่อราย (§6.4)
 - `tb_contacts` ผู้สัมผัส — `contact_type` = `household` | `close`, มี `current_address`, `tb_treat_place`
 - `tb_visits` บันทึกรายครั้ง (FK ไป patient **หรือ** contact อย่างใดอย่างหนึ่ง), มี GPS + `client_uuid` กันส่งซ้ำ

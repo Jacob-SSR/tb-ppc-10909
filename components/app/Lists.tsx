@@ -5,7 +5,7 @@ import { Button, Card, Empty, Input, Modal, Select } from "@/components/ui";
 import { isTB } from "@/lib/tb/contacts";
 import { OPTIONS } from "@/lib/tb/options";
 import { api } from "./api";
-import { ContactCard, PatientCard, th } from "./bits";
+import { ContactCard, PatientCard, patientAddress, th } from "./bits";
 import { useApp } from "./store";
 import type { Patient } from "./types";
 
@@ -85,7 +85,7 @@ export function PickIndex() {
     ? data.patients.filter((p) => Number(p.fy) === fy && (!q || norm(`${p.name} ${p.hn}`).includes(norm(q))))
     : q.trim().length < 2 ? [] : remote;
   const pick = (p: Patient) =>
-    open({ type: "contact", contact: { patient_id: p.id, contact_type: "household", ring: 1, unit_id: isAdmin ? (p.unit_id ?? undefined) : data.user.unitId, address: [p.address, p.area].filter(Boolean).join(" ") || null, current_address: p.current_address ?? null } });
+    open({ type: "contact", contact: { patient_id: p.id, contact_type: "household", ring: 1, unit_id: isAdmin ? (p.unit_id ?? undefined) : data.user.unitId, address: patientAddress(p) || null, current_address: p.current_address ?? null } });
   return (
     <Modal open onClose={() => open(null)} title="เพิ่มผู้สัมผัส – เลือกผู้ป่วย index" subtitle={isAdmin ? `ปีงบ ${fy}` : "พิมพ์ HN หรือชื่อผู้ป่วยอย่างน้อย 2 ตัวอักษร"}>
       <Input type="search" autoFocus placeholder="ค้นหาชื่อ / HN" value={q} onChange={(e) => setQ(e.target.value)} className="mb-3" />

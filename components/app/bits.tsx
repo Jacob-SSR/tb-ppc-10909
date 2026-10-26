@@ -22,6 +22,12 @@ export function OutcomeBadge({ outcome }: { outcome: string | null | undefined }
   return <Badge tone={OUTCOME_TONE[o] ?? "muted"}>{o}</Badge>;
 }
 
+/** ที่อยู่ตามทะเบียนของผู้ป่วยเป็นข้อความเดียว: บ้านเลขที่/หมู่ ตำบล อ. จ. รหัสไปรษณีย์ */
+export function patientAddress(p: { address?: string | null; area?: string | null; amphoe?: string | null; province?: string | null; postcode?: string | null }): string {
+  const v = (x: string | null | undefined) => (x ?? "").trim();
+  return [v(p.address), v(p.area), v(p.amphoe) && `อ.${v(p.amphoe)}`, v(p.province) && `จ.${v(p.province)}`, v(p.postcode)].filter(Boolean).join(" ");
+}
+
 export const isRR = (p: Pick<Patient, "rr">) => /RR|MDR|^ดื้อ/i.test(p.rr ?? "") && !/^ไม่/.test(p.rr ?? "");
 
 /** เบอร์โทรกดโทรได้บนมือถือ (§6.5) */

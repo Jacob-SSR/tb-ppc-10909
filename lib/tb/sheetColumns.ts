@@ -55,6 +55,9 @@ export const PATIENT_SHEET_COLUMNS: readonly SheetColumn[] = [
   ["แก้ไขเมื่อ", "updated_at"],
   // ── ต่อท้าย (ไม่มีใน Sheet เดิม) ──
   ["ที่อยู่ปัจจุบัน", "current_address"],
+  ["อำเภอ", "amphoe"],
+  ["จังหวัด", "province"],
+  ["รหัสไปรษณีย์", "postcode"],
 ];
 
 export const CONTACT_SHEET_COLUMNS: readonly SheetColumn[] = [
