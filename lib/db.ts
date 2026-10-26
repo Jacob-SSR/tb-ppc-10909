@@ -109,7 +109,7 @@ export async function checkTbDb(): Promise<boolean> {
     const hint =
       e.code === "ER_ACCESS_DENIED_ERROR" && /@'localhost'/.test(e.message ?? "")
         ? `MySQL ที่ตอบอยู่ port ${port} เป็นตัวที่ติดตั้งบนเครื่องนี้ (XAMPP/MySQL Service) ไม่ใช่ตัวใน Docker\n` +
-          "       (ถ้าเป็น Docker จะเห็นเป็น @'172.x.x.x') → เปิด port ของ container เป็นเลขอื่น เช่น 3307 แล้วตั้ง TB_DB_PORT ให้ตรง"
+          "       (ถ้าเป็น Docker จะเห็นเป็น @'172.x.x.x') → MySQL ใน Docker เปิดที่ 127.0.0.1:3313 (TB_MYSQL_PORT) → ตั้ง TB_DB_PORT=3313"
         : e.code === "ER_ACCESS_DENIED_ERROR"
           ? "TB_DB_PASSWORD ไม่ตรงกับ TB_APP_PASSWORD ที่ใช้ตอนสร้าง volume mysql ครั้งแรก"
           : e.code === "ECONNREFUSED"

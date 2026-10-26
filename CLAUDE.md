@@ -69,7 +69,7 @@ DB pools ใน `lib/db.ts`:
 
 - service `mysql` ใน `docker-compose.yml` ของโปรเจกต์นี้: `image: mysql:8.4`, `TZ=Asia/Bangkok`, `--character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci`
 - ข้อมูลอยู่ใน named volume `tb_mysql` — **ห้าม** `docker compose down -v` บน production
-- **ไม่เปิด `ports:`** ออก LAN; แอปต่อผ่านชื่อ service `mysql:3306` ใน network ของ compose
+- **ไม่เปิด `ports:`** ออก LAN; แอปต่อผ่านชื่อ service `mysql:3306` ใน network ของ compose — เปิดเฉพาะ `127.0.0.1:3313` บนเครื่อง (`TB_MYSQL_PORT`) ให้ต่อจากเครื่อง server/SSH tunnel; phpMyAdmin port 9010 อยู่ใน profile `pma` เปิดเฉพาะตอนใช้ (Jed ขอ 26 ต.ค. 2569)
 - จำกัดหน่วยความจำ (`--innodb-buffer-pool-size=256M` + `mem_limit`) เพื่อไม่แย่ง RAM กับ ppc-hos บนเครื่องเดียวกัน
 - `docker-entrypoint-initdb.d/` ใช้**เฉพาะสร้างบัญชี** `tb_app` (สคริปต์ `.sh` อ่านรหัสจาก env) สิทธิ์ `SELECT, INSERT, UPDATE` บน `ppc_tb.*` + `DELETE` บน `tb_settings` — ห้ามใช้ `MYSQL_USER`/`MYSQL_PASSWORD` (ได้สิทธิ์ ALL)
 - Schema สร้างด้วย **migration** ตั้งแต่วันแรก: `db/migrations/001_init.sql` (= `ppc_tb_schema.sql` ตัดส่วน CREATE USER ท้ายไฟล์ออก; GRANT DELETE ของ `tb_app` อยู่ใน `002_app_grants.sql`), ไฟล์ถัดไปเรียงเลข, ตาราง `schema_migrations` จำว่ารันอะไรแล้ว, รันด้วย `npm run migrate` ด้วยบัญชี migrate แยก (มีสิทธิ์ DDL) — ไม่แก้ไฟล์ migration ที่รันไปแล้ว

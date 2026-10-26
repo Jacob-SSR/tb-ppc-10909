@@ -17,7 +17,7 @@ services:
     container_name: tb-ppc-app
     restart: unless-stopped
     ports:
-      - "3010:3000"
+      - "${TB_APP_PORT:-3010}:3000"   # เปลี่ยนได้ใน .env ถ้า 3010 ชนกับระบบอื่นบนเครื่อง
     env_file:
       - .env.production
     environment:
@@ -59,7 +59,10 @@ services:
       # สร้างบัญชี tb_app / tb_migrate ครั้งแรกเท่านั้น (ตอน volume ว่าง)
       - ./db/init:/docker-entrypoint-initdb.d:ro
       - ./db/conf/client-utf8mb4.cnf:/etc/mysql/conf.d/client-utf8mb4.cnf:ro
-    # ไม่เปิด ports: ออก LAN — แอปต่อผ่าน mysql:3306 ใน network ของ compose
+    # แอปต่อผ่าน mysql:3306 ใน network ของ compose — port บนเครื่องเปิดเฉพาะ 127.0.0.1 (ไม่ออก LAN, §4.1)
+    # ใช้ต่อด้วยโปรแกรมบนเครื่อง server เอง หรือผ่าน SSH tunnel; เปลี่ยนเลขได้ด้วย TB_MYSQL_PORT ใน .env
+    ports:
+      - "127.0.0.1:${TB_MYSQL_PORT:-3313}:3306"
     mem_limit: 768m
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
@@ -143,6 +146,25 @@ services:
       - TB_DB_HOST=mysql
       - REDIS_URL=redis://redis:6379
       - TZ=Asia/Bangkok
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  # phpMyAdmin — เปิดเฉพาะตอนใช้: docker compose --profile pma up -d phpmyadmin  (ปิด: docker compose stop phpmyadmin)
+  # ต่อได้เฉพาะ MySQL ของระบบนี้ (ไม่ให้กรอก server อื่น) · แนะนำ login ด้วย tb_app (แก้ข้อมูลได้แต่ลบ/แก้โครงสร้างไม่ได้)
+  phpmyadmin:
+    image: phpmyadmin:5.2.2
+    container_name: tb-ppc-phpmyadmin
+    profiles: ["pma"]
+    restart: unless-stopped
+    environment:
+      - PMA_HOST=mysql
+      - PMA_PORT=3306
+      - PMA_ARBITRARY=0
+      - UPLOAD_LIMIT=64M
+      - TZ=Asia/Bangkok
+    ports:
+      - "${PMA_PORT:-9010}:80"
     depends_on:
       mysql:
         condition: service_healthy
