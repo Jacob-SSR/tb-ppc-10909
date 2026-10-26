@@ -53,6 +53,8 @@ export const PATIENT_SHEET_COLUMNS: readonly SheetColumn[] = [
   ["บันทึก", "notes"],
   ["แก้ไขโดย", "updated_by_name"],
   ["แก้ไขเมื่อ", "updated_at"],
+  // ── ต่อท้าย (ไม่มีใน Sheet เดิม) ──
+  ["ที่อยู่ปัจจุบัน", "current_address"],
 ];
 
 export const CONTACT_SHEET_COLUMNS: readonly SheetColumn[] = [

@@ -20,6 +20,7 @@ export interface PatientRow {
   age: number | null;
   address: string | null;
   area: string | null;
+  current_address: string | null;
   unit_id: number | null;
   phone: string | null;
   lat: number | null;

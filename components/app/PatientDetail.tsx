@@ -63,7 +63,8 @@ export function PatientDetail({ id }: { id: string }) {
           <Info label="สูตรยา">{p.regimen}</Info>
           <Info label="วินิจฉัย">{p.diag_basis}</Info>
           <Info label="ผลดื้อ Rifampicin">{p.rr}</Info>
-          <Info label="ที่อยู่">{[p.address, p.area].filter(Boolean).join(" ")}</Info>
+          <Info label="ที่อยู่ตามทะเบียน">{[p.address, p.area].filter(Boolean).join(" ")}</Info>
+          {p.current_address && <Info label="ที่อยู่ปัจจุบัน">{p.current_address}</Info>}
           <Info label="รพ.สต.รับผิดชอบ">{unitName(p.unit_id)}</Info>
           <Info label="โรคร่วม">{p.comorbid}</Info>
         </div>
@@ -122,7 +123,7 @@ export function PatientDetail({ id }: { id: string }) {
         <div className="mt-3">
           <Button variant="contact" size="sm" onClick={() => open({
             type: "contact",
-            contact: { patient_id: id, contact_type: "household", ring: 1, unit_id: isAdmin ? (p.unit_id ?? undefined) : data.user.unitId, address: [p.address, p.area].filter(Boolean).join(" ") || null },
+            contact: { patient_id: id, contact_type: "household", ring: 1, unit_id: isAdmin ? (p.unit_id ?? undefined) : data.user.unitId, address: [p.address, p.area].filter(Boolean).join(" ") || null, current_address: p.current_address ?? null },
           })}>+ เพิ่มผู้สัมผัส</Button>
         </div>
       </Section>

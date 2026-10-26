@@ -40,7 +40,7 @@ export function exportPatientWord(s: Store, p: Patient) {
     { t: "kv", rows: [
       ["ชื่อ-สกุล", p.name], ["HN", p.hn], ["TB number", p.tb_no], ["เลขบัตรประชาชน", p.cid],
       ["เพศ / อายุ", [p.sex, p.age ? `${p.age} ปี` : ""].filter(Boolean).join(" / ")], ["สิทธิการรักษา", p.rights],
-      ["ที่อยู่", [p.address, p.area].filter(Boolean).join(" ")], ["รพ.สต.รับผิดชอบ", s.unitName(p.unit_id)], ["โทรศัพท์", p.phone],
+      ["ที่อยู่ตามทะเบียน", [p.address, p.area].filter(Boolean).join(" ")], ["ที่อยู่ปัจจุบัน", p.current_address], ["รพ.สต.รับผิดชอบ", s.unitName(p.unit_id)], ["โทรศัพท์", p.phone],
       ["โรคร่วม", p.comorbid], ["ผล HIV", p.hiv],
     ] },
     { t: "h2", text: "การวินิจฉัยและการรักษา" },
@@ -90,7 +90,7 @@ export function exportDueWord(s: Store, items: DueItem[], unitLabel: string) {
     return [
       th(x.due) + (x.due! < t ? ` (เกิน ${diffDays(x.due!, t)} วัน)` : ""), `${x.step} ${x.what}`, x.rec.name,
       c ? `${c.relation ?? ""} ของ ${idx?.name ?? ""}` : `ผู้ป่วย HN ${(x.rec as Patient).hn ?? ""}`,
-      c ? s.unitName(c.unit_id) : (x.rec as Patient).area, x.rec.phone, c ? (c.current_address || c.address) : (x.rec as Patient).address, "",
+      c ? s.unitName(c.unit_id) : (x.rec as Patient).area, x.rec.phone, c ? (c.current_address || c.address) : ((x.rec as Patient).current_address || [(x.rec as Patient).address, (x.rec as Patient).area].filter(Boolean).join(" ")), "",
     ];
   };
   const blocks: Block[] = [

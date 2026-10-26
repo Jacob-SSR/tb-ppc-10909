@@ -66,6 +66,7 @@ export const patientFields = {
   age: intIn(0, 150),
   address: text(200),
   area: text(100),
+  current_address: text(200),
   unit_id: intIn(1, 65535),
   phone: text(30),
   lat: coord(-90, 90),
