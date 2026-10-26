@@ -14,6 +14,79 @@ interface Report {
   skipped: { row: number; reason: string }[]; unknownHeaders: string[];
 }
 
+interface MigrateResult {
+  dry: boolean; source: string; warnings: string[];
+  reports: { tab: string; report: Omit<Report, "kind" | "sheet" | "dry"> }[];
+  log: { read: number; added: number };
+  inDb: { patients: number; contacts: number; visits: number };
+  inSource: { patients: number; contacts: number; visits: number };
+}
+
+/** ย้ายข้อมูลจากระบบเดิมจากเว็บ (แทนการรันสคริปต์) — อ่าน Google Sheet ตรง หรือไฟล์ .xlsx ที่ดาวน์โหลดมา */
+function MigratePanel() {
+  const { data, reload } = useApp();
+  const [file, setFile] = useState<File | null>(null);
+  const [res, setRes] = useState<MigrateResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const canSheet = data.features.sheet;
+
+  async function run(dry: boolean) {
+    if (!dry && !confirm(`ยืนยันย้ายข้อมูลจาก ${res?.source ?? "ระบบเดิม"} เข้าระบบ? (รันซ้ำได้ — ข้อมูลเดิมถูกอัปเดตตามรหัส ไม่ซ้ำ)`)) return;
+    setBusy(true);
+    const fd = new FormData();
+    fd.set("dry", dry ? "1" : "0");
+    if (file) fd.set("file", file);
+    try {
+      const r = await api<MigrateResult>("POST", "/api/migrate", fd);
+      setRes(r);
+      if (!dry) {
+        toast(`ย้ายข้อมูลแล้ว: ผู้ป่วยในระบบ ${r.inDb.patients} ราย`);
+        await reload();
+      }
+    } catch (err) {
+      toast((err as Error).message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const skipped = res ? res.reports.reduce((n, x) => n + x.report.skipped.length, 0) : 0;
+  return (
+    <Section title="ย้ายข้อมูลจากระบบเดิม (Google Sheet → ระบบนี้)">
+      <p className="mb-3 text-sm text-muted">
+        ดึง DB_Patients / DB_Contacts / DB_Visits / DB_Log จากระบบเดิม คงรหัสเดิม รันซ้ำได้ (ไม่เพิ่มซ้ำ) · ไม่ดึง DB_Users (PIN)
+        · {canSheet ? "ไม่เลือกไฟล์ = อ่านจาก Google Sheet ตรง" : "ยังไม่ได้ตั้ง Google Sheet — ดาวน์โหลด Sheet เป็น .xlsx แล้วเลือกไฟล์"}
+      </p>
+      <div className="flex flex-wrap items-end gap-2 rounded-xl border-2 border-dashed border-line bg-background p-3">
+        <Field label={canSheet ? "ไฟล์ .xlsx (ไม่บังคับ)" : "ไฟล์ .xlsx"}><Input type="file" accept=".xlsx" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setRes(null); }} /></Field>
+        <Button onClick={() => run(true)} disabled={busy || (!canSheet && !file)}>{busy ? "กำลังอ่าน…" : "1) ตรวจก่อน (ยังไม่บันทึก)"}</Button>
+      </div>
+      {res && (
+        <Card className="mt-3">
+          <div className="font-semibold">{res.dry ? "ผลตรวจ (ยังไม่บันทึก)" : "ย้ายข้อมูลเสร็จ"} · จาก {res.source}</div>
+          {res.warnings.map((w) => <div key={w} className="text-sm text-warn">⚠ {w}</div>)}
+          <ul className="mt-1 space-y-0.5 text-sm">
+            {res.reports.map(({ tab, report: r }) => (
+              <li key={tab}>{tab}: อ่าน {r.read} · <b className="text-ok">เพิ่ม {r.added}</b> · <b className="text-brand">อัปเดต {r.updated}</b> · ไม่เปลี่ยน {r.unchanged} · <b className="text-bad">ปฏิเสธ {r.skipped.length}</b></li>
+            ))}
+            <li>DB_Log: นำเข้าเป็นประวัติ {res.log.added} จาก {res.log.read}</li>
+          </ul>
+          <div className={`mt-2 text-sm font-semibold ${res.inDb.patients >= res.inSource.patients ? "text-ok" : "text-bad"}`}>
+            ผู้ป่วยในระบบหลังย้าย {res.inDb.patients} · ในแหล่ง {res.inSource.patients}
+            {res.inDb.patients > res.inSource.patients && <span className="font-normal text-muted"> (เกินเพราะมีรายที่คีย์ในระบบนี้อยู่แล้ว เช่น ข้อมูลทดสอบ)</span>}
+          </div>
+          {skipped > 0 && (
+            <ul className="mt-2 max-h-48 overflow-y-auto text-sm text-bad">
+              {res.reports.flatMap(({ tab, report }) => report.skipped.map((x) => <li key={`${tab}${x.row}`}>{tab} แถว {x.row}: {x.reason}</li>))}
+            </ul>
+          )}
+          {res.dry && <Button className="mt-3" onClick={() => run(false)} disabled={busy}>2) ย้ายข้อมูลจริง</Button>}
+        </Card>
+      )}
+    </Section>
+  );
+}
+
 export function ImportExportTab() {
   const { fy, isAdmin, reload } = useApp();
   const [kind, setKind] = useState<"patient" | "contact">("patient");
@@ -52,6 +125,7 @@ export function ImportExportTab() {
           <a href="/api/export?fy=all"><Button variant="ghost">ส่งออกทุกปีงบ</Button></a>
         </div>
       </Section>
+      {isAdmin && <MigratePanel />}
       {isAdmin ? (
         <Section title="นำเข้าจาก Excel">
           <p className="mb-3 text-sm text-muted">
