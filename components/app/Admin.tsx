@@ -163,6 +163,8 @@ export function ImportExportTab() {
 
 // ── ตั้งเป้าหมาย + การแจ้งเตือน ────────────────────────────────────────────────
 
+const QUARTER_MONTHS: Record<PeriodQuarter, string> = { 0: "ต.ค.–ก.ย.", 1: "ต.ค.–ธ.ค.", 2: "ม.ค.–มี.ค.", 3: "เม.ย.–มิ.ย.", 4: "ก.ค.–ก.ย." };
+
 export function SettingsTab() {
   const { data, fys, fy: currentFy, reload } = useApp();
   const [fy, setFy] = useState(currentFy);
@@ -177,6 +179,19 @@ export function SettingsTab() {
   };
   const [emails, setEmails] = useState(data.settings.reminder_emails ?? "");
   const [busy, setBusy] = useState(false);
+
+  /** แบ่งเป้าทั้งปีลง Q1–Q4: จำนวนราย = หาร 4 (เศษให้ไตรมาสแรกๆ), ร้อยละ = ใช้ค่าเดียวกันทุกไตรมาส */
+  function splitYear(ind: (typeof INDICATORS)[number]) {
+    const year = Number(vals[key(0, ind.id)]);
+    if (!vals[key(0, ind.id)]?.trim() || !Number.isFinite(year)) return toast("กรอกช่อง \"ทั้งปีงบ\" ก่อน", "bad");
+    const next = { ...vals };
+    for (const q of [1, 2, 3, 4]) {
+      next[key(q, ind.id)] = ind.unit === "percent"
+        ? String(year)
+        : String(Math.floor(year / 4) + (q <= Math.round(year) % 4 ? 1 : 0));
+    }
+    setVals(next);
+  }
 
   async function save() {
     setBusy(true);
@@ -211,14 +226,26 @@ export function SettingsTab() {
         <div className="mb-3 flex items-center gap-2">
           <span className="text-sm text-muted">ปีงบ</span>
           <Select className="w-auto" placeholder={false} options={years.map((y) => ({ value: y, label: String(y) }))} value={fy} onChange={(e) => changeFy(Number(e.target.value))} />
-          <span className="text-xs text-muted">เว้นว่าง = ยังไม่ตั้งเป้า (การ์ดแสดง &quot;ยังไม่ตั้งเป้า&quot; ไม่ใช่ 0%)</span>
+        </div>
+        <div className="mb-3 rounded-xl bg-mint p-3 text-sm leading-relaxed">
+          <div className="mb-1 font-semibold text-brand">กรอกอะไร?</div>
+          <ul className="list-disc space-y-0.5 pl-5">
+            <li>แถวแรก <b>ผู้ป่วยใหม่ + กลับเป็นซ้ำ</b> → กรอก <b>จำนวนคน (ราย)</b> ที่จังหวัดให้เป็นเป้า เช่น เป้าทั้งปี 60 ราย → ทั้งปีงบ <b>60</b>, แต่ละไตรมาส <b>15</b></li>
+            <li>แถวที่เป็น <b>%</b> → กรอก<b>ตัวเลขร้อยละ</b> ไม่ต้องพิมพ์เครื่องหมาย % เช่น Success Rate เป้า 88% → กรอก <b>88</b></li>
+            <li><b>อัตราเสียชีวิต</b> ยิ่งต่ำยิ่งดี → กรอก<b>ค่าสูงสุดที่ยอมรับได้</b> เช่น ไม่เกิน 5% → กรอก <b>5</b></li>
+            <li><b>Q1</b> ต.ค.–ธ.ค. · <b>Q2</b> ม.ค.–มี.ค. · <b>Q3</b> เม.ย.–มิ.ย. · <b>Q4</b> ก.ค.–ก.ย. — ถ้าไม่ดูรายไตรมาส กรอกแค่ <b>ทั้งปีงบ</b> ก็พอ หรือกด <b>&quot;แบ่งลงไตรมาส&quot;</b> ให้ระบบเติมให้</li>
+            <li>Treatment Coverage คำนวณจากแถวแรก — ต้องกรอกเป้าจำนวนผู้ป่วยของช่วงนั้นก่อนจึงจะแสดงผลได้</li>
+            <li>ช่องที่เว้นว่าง = ยังไม่ตั้งเป้า (แดชบอร์ดแสดง &quot;ยังไม่ตั้งเป้า&quot; ไม่ใช่ 0%)</li>
+          </ul>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="text-left text-muted">
                 <th className="py-2 pr-2 font-medium">ตัวชี้วัด</th>
-                {([0, 1, 2, 3, 4] as PeriodQuarter[]).map((q) => <th key={q} className="px-1 font-medium">{PERIOD_LABEL[q]}</th>)}
+                {([0, 1, 2, 3, 4] as PeriodQuarter[]).map((q) => (
+                  <th key={q} className="px-1 font-medium">{PERIOD_LABEL[q]}<div className="text-[11px] font-normal">{QUARTER_MONTHS[q]}</div></th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -227,10 +254,18 @@ export function SettingsTab() {
                   <td className="py-2 pr-2">
                     <div className="font-medium">{ind.label} <span className="text-xs text-muted">({ind.unit === "cases" ? "ราย" : "%"})</span></div>
                     <div className="text-xs text-muted">{ind.hint}</div>
+                    <button type="button" className="mt-1 text-xs text-brand-2 underline" onClick={() => splitYear(ind)}>
+                      แบ่งลงไตรมาส {ind.unit === "cases" ? "(ทั้งปี ÷ 4)" : "(ใช้ค่าเดียวกับทั้งปี)"}
+                    </button>
                   </td>
                   {([0, 1, 2, 3, 4] as PeriodQuarter[]).map((q) => (
                     <td key={q} className="px-1 py-2">
-                      <Input type="number" min={0} step={ind.unit === "percent" ? 0.1 : 1} value={vals[key(q, ind.id)] ?? ""} onChange={(e) => setVals({ ...vals, [key(q, ind.id)]: e.target.value })} className="w-20" />
+                      <div className="relative w-24">
+                        <Input type="number" min={0} max={ind.unit === "percent" ? 100 : undefined} step={ind.unit === "percent" ? 0.1 : 1}
+                          aria-label={`${ind.label} ${PERIOD_LABEL[q]}`}
+                          value={vals[key(q, ind.id)] ?? ""} onChange={(e) => setVals({ ...vals, [key(q, ind.id)]: e.target.value })} className="pr-9" />
+                        <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted">{ind.unit === "percent" ? "%" : "ราย"}</span>
+                      </div>
                     </td>
                   ))}
                 </tr>
