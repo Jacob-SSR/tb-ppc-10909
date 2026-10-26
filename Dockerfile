@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # stage: deps → builder → runner (แอป) / tools (migrate, สร้าง admin, import)
 
 FROM node:22-slim AS base
