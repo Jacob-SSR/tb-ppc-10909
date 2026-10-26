@@ -122,6 +122,8 @@ services:
       context: .
       target: tools
     image: tb-ppc-tools:latest
+    # build ใหม่ทุกครั้งที่ run (มี cache เร็ว) — ไม่งั้นหลัง git pull จะรัน migration/สคริปต์ชุดเก่าที่ค้างใน image
+    pull_policy: build
     profiles: ["tools"]
     env_file:
       - .env.mysql
@@ -139,6 +141,7 @@ services:
     build:
       context: .
       target: tools
+    pull_policy: build
     profiles: ["tools"]
     env_file:
       - .env.production
