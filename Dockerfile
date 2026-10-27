@@ -16,6 +16,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # ไม่ต้องมี .env ตอน build — env ทั้งหมดอ่านตอน runtime จาก env_file ของ compose
 # ฟอนต์มาจาก npm (@fontsource) — ขั้น build ไม่ต้องต่อ Google Fonts
+# ข้ามขั้นตรวจ TypeScript (ใช้ RAM มาก ค้างบนเครื่อง RAM น้อย) — ตรวจด้วย npm run typecheck ก่อน push แล้ว
+ENV SKIP_TYPECHECK=1
 RUN npm run build
 
 # ---------- tools: migrate / create-admin / import (docker compose run --rm migrate | cli) ----------
