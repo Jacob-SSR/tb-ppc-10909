@@ -6,14 +6,17 @@ import { fyOf } from "@/lib/tb/dates";
 import { contactTasks, patientStart, patientTasks, type Task } from "@/lib/tb/tasks";
 import { api, ApiError, NetworkError } from "./api";
 import { deleteDraft, listDrafts, saveDraft, type VisitDraft } from "./drafts";
-import type { AppData, Contact, Followup, Patient, Visit } from "./types";
+import type { AppData, Appt, Contact, Followup, Patient, Visit } from "./types";
 
 export type ModalState =
   | { type: "patient"; id: string }
   | { type: "patientForm"; patient: Partial<Patient> | null }
   | { type: "contact"; contact: Partial<Contact> }
   | { type: "pickIndex" }
-  | { type: "history"; id: string; title: string; back?: ModalState };
+  | { type: "history"; id: string; title: string; back?: ModalState }
+  | { type: "appointment"; appt: Partial<Appt>; back?: ModalState }
+  | { type: "pickAppt" }
+  | { type: "hosxpAppts"; patientId: string };
 
 export interface DueItem extends Task {
   kind: "P" | "C";
@@ -34,6 +37,8 @@ interface Store {
   contactsOf: (patientId: string) => Contact[];
   followupsOf: (patientId: string) => Followup[];
   visitsOf: (refId: string) => Visit[];
+  /** นัดทั้งหมดของรายนั้น (ค้าง + ประวัติ 1 ปี) เรียงตามวัน */
+  apptsOf: (refId: string) => Appt[];
   unitName: (id: number | null | undefined) => string;
   tasksOfContact: (c: Contact) => Task[];
   tasksOfPatient: (p: Patient) => Task[];
@@ -74,8 +79,13 @@ export function AppProvider({ initial, children }: { initial: AppData; children:
       const ref = (v.patient_id ?? v.contact_id)!;
       visits.set(ref, [...(visits.get(ref) ?? []), v]);
     }
+    const appts = new Map<string, Appt[]>();
+    for (const a of data.appointments) {
+      const ref = (a.patient_id ?? a.contact_id)!;
+      appts.set(ref, [...(appts.get(ref) ?? []), a]);
+    }
     const units = new Map(data.units.map((u) => [u.id, u.name]));
-    return { patients, contacts, byPatient, fu, visits, units };
+    return { patients, contacts, byPatient, fu, visits, appts, units };
   }, [data]);
 
   const tasksOfContact = useCallback(
@@ -153,6 +163,7 @@ export function AppProvider({ initial, children }: { initial: AppData; children:
     contactsOf: (pid) => idx.byPatient.get(pid) ?? [],
     followupsOf: (pid) => idx.fu.get(pid) ?? [],
     visitsOf: (ref) => idx.visits.get(ref) ?? [],
+    apptsOf: (ref) => idx.appts.get(ref) ?? [],
     unitName: (id) => (id ? idx.units.get(id) ?? "" : ""),
     tasksOfContact,
     tasksOfPatient,

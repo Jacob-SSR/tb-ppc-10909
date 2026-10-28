@@ -2,6 +2,7 @@
 // เริ่มจาก instrumentation.ts — ปิดได้ด้วย WORKER=0
 //   ทุก 1 นาที  : ส่งคิว outbox ไป Google Sheet
 //   02:00       : rebuild ทุกแท็บจาก MySQL
+//   06:00       : อัปเดตนัดที่ดึงจาก HOSxP (มาตามนัด / ยกเลิก / เลื่อน)
 //   07:00       : แจ้งนัด (LINE + อีเมล)
 //   ทุกชั่วโมง  : คิวค้าง > 1 ชม. → แจ้ง LINE (ไม่เกินทุก 6 ชม.)
 //   09:00       : backup ล่าสุดเก่ากว่า 26 ชม. → แจ้ง LINE (BACKUP_CHECK_DIR)
@@ -13,6 +14,8 @@ import { redis } from "../redis.ts";
 import { sheetsConfigured } from "../sheets.ts";
 import { todayBangkok } from "../tb/dates.ts";
 import { Mirror } from "./mirror.ts";
+import { hosxpConfigured } from "../hosxp.ts";
+import { refreshHosxpAppointments } from "./hosxpAppointments.ts";
 import { checkStaleOutbox, sendDailyReminder } from "./reminders.ts";
 import { googleSheetApi } from "./sheetApi.ts";
 
@@ -90,6 +93,9 @@ async function tick() {
     }
     if (mirror && h === 2 && (await once(`rebuild:${today}`, 26 * 3600))) {
       log("rebuild Sheet:", await mirror.rebuild().catch((e: Error) => e.message));
+    }
+    if (h === 6 && hosxpConfigured() && (await once(`hosxp-appt:${today}`, 26 * 3600))) {
+      log("อัปเดตนัดจาก HOSxP:", await refreshHosxpAppointments(tbDb).catch((e: Error) => `ล้มเหลว ${e.message}`));
     }
     if (h === 7 && (await once(`reminder:${today}`, 26 * 3600))) {
       log("แจ้งนัด:", await sendDailyReminder(tbDb, today));

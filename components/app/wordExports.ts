@@ -7,7 +7,7 @@ import { followupsForForm, toFollowupInput } from "@/lib/tb/followups";
 import { isConcluded, patientStart, screened } from "@/lib/tb/tasks";
 import { contactStatus, isRR, patientAddress, th } from "./bits";
 import type { DueItem, useApp } from "./store";
-import type { Contact, Patient, Visit } from "./types";
+import type { Contact, Patient } from "./types";
 import { downloadWord, type Block } from "./word";
 
 type Store = ReturnType<typeof useApp>;
@@ -104,7 +104,7 @@ export function exportDueWord(s: Store, items: DueItem[], unitLabel: string) {
   return save(s, `รายการติดตาม_${unitLabel || "ทุกหน่วย"}_${t}`, "รายการติดตาม", blocks, true);
 }
 
-export interface ApptEntry { appt: string; kind: "P" | "C"; rec: Patient | Contact; last: Pick<Visit, "visit_date" | "visit_type"> }
+export interface ApptEntry { appt: string; kind: "P" | "C"; rec: Patient | Contact; summary: string }
 
 export function exportApptWord(s: Store, groups: [string, ApptEntry[]][], unitLabel: string) {
   const row = (a: ApptEntry) => {
@@ -112,7 +112,7 @@ export function exportApptWord(s: Store, groups: [string, ApptEntry[]][], unitLa
     const idx = c ? s.patientById(c.patient_id) : null;
     return [
       th(a.appt), a.rec.name, c ? "ผู้สัมผัส" : "ผู้ป่วย", c ? `${c.relation ?? ""} ของ ${idx?.name ?? ""}` : `HN ${(a.rec as Patient).hn ?? ""}`,
-      s.unitName(a.rec.unit_id) || (a.rec as Patient).area, a.rec.phone, `${th(a.last.visit_date)} ${a.last.visit_type}`, "",
+      s.unitName(a.rec.unit_id) || (a.rec as Patient).area, a.rec.phone, a.summary, "",
     ];
   };
   const blocks: Block[] = [
@@ -120,7 +120,7 @@ export function exportApptWord(s: Store, groups: [string, ApptEntry[]][], unitLa
     { t: "sub", text: `${unitLabel ? `${unitLabel} · ` : ""}ข้อมูล ณ ${d(s.data.today)}` },
     ...groups.flatMap(([title, list]) => list.length ? [
       { t: "h2", text: `${title} (${list.length})` } as Block,
-      { t: "table", head: ["วันนัด", "ชื่อ-สกุล", "ประเภท", "HN / ความเกี่ยวข้อง", "หน่วย/พื้นที่", "โทรศัพท์", "ครั้งล่าสุด", "มา / ลงชื่อ"], rows: list.map(row), widths: [10, 16, 9, 17, 12, 10, 16, 10] } as Block,
+      { t: "table", head: ["วันนัด", "ชื่อ-สกุล", "ประเภท", "HN / ความเกี่ยวข้อง", "หน่วย/พื้นที่", "โทรศัพท์", "เรื่องที่นัด", "มา / ลงชื่อ"], rows: list.map(row), widths: [10, 16, 9, 17, 12, 10, 16, 10] } as Block,
     ] : []),
   ];
   return save(s, `รายการนัด_${unitLabel || "ทุกหน่วย"}_${s.data.today}`, "รายการนัดหมาย", blocks, true);

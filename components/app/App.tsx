@@ -5,6 +5,7 @@ import { Badge, Button, Spinner, Toaster, toast } from "@/components/ui";
 import { ImportExportTab, SettingsTab, UsersTab } from "./Admin";
 import { api } from "./api";
 import { ContactForm } from "./ContactForm";
+import { AppointmentForm, HosxpApptPicker, PickApptRef } from "./Appointments";
 import { DashboardTab } from "./Dashboard";
 import { History } from "./History";
 import { ContactsTab, PatientsTab, PickIndex } from "./Lists";
@@ -87,6 +88,9 @@ function Shell() {
       {modal?.type === "contact" && <ContactForm key={modal.contact.id ?? "new"} contact={modal.contact} />}
       {modal?.type === "pickIndex" && <PickIndex />}
       {modal?.type === "history" && <History id={modal.id} title={modal.title} back={modal.back} />}
+      {modal?.type === "appointment" && <AppointmentForm key={modal.appt.id ?? "new"} appt={modal.appt} back={modal.back} />}
+      {modal?.type === "pickAppt" && <PickApptRef />}
+      {modal?.type === "hosxpAppts" && <HosxpApptPicker patientId={modal.patientId} />}
     </>
   );
 }

@@ -148,6 +148,9 @@ MSYS_NO_PATHCONV=1 docker compose run --rm -v "$(pwd -W)/Tuberculosis.xlsx:/impo
 `HOSXP_DB_HOST/PORT/NAME/USER/PASSWORD` — **บัญชีที่มีแค่ SELECT** · pool 3 connection · cache 1 ชม. · ทีม รพ. เท่านั้น
 HOSxP ปิดอยู่ก็ยังคีย์ทะเบียนได้ (กรอกเอง)
 
+นัดหมาย: หน้าผู้ป่วย → "ดึงนัดจาก HOSxP" อ่านตาราง `oapp` (+ clinic / doctor / kskdepartment) ของ HN นั้น แล้วเลือกนัดที่จะเก็บสำเนาในระบบ
+(ไม่เขียนกลับ HOSxP) · ทุกเช้า 06:00 ระบบอัปเดตนัดที่ดึงมาแล้ว: มี `visit_vn` = มาตามนัด, สถานะไม่ใช่ NULL/1 (`HOSXP_ACTIVE_STATUS_IDS`) หรือถูกลบ = ยกเลิก, วันเลื่อน = เลื่อนตาม
+
 ## Backup และ restore (ทดสอบแล้ว)
 
 service `backup` รัน `mysqldump --single-transaction` ทุกคืน 01:00 → `ppc_tb-YYYYMMDD-HHMM.sql.gz` + `.sha256` ใน `BACKUP_DIR` เก็บ 30 วัน

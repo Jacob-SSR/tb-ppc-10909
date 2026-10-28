@@ -114,3 +114,70 @@ export async function findHosxpPatient(by: { hn?: string; cid?: string }): Promi
   } catch { /* ไม่ cache ก็ได้ */ }
   return out;
 }
+
+// ── นัดหมายจาก HOSxP (oapp) — SQL แบบเดียวกับ plubplachai-alert (src/server/hosxp.ts) ─────────────
+// อ่านอย่างเดียว: ดึงมาเก็บสำเนาใน tb_appointments (source='hosxp') ไม่เขียนกลับ HOSxP
+
+export interface HosxpAppointment {
+  oapp_id: string;
+  date: string;
+  time: string | null;
+  clinic: string;
+  place: string;
+  doctor: string;
+  /** เหตุที่นัด (oapp.app_cause) */
+  cause: string;
+  note: string;
+  status: string | null;
+  /** NULL / 1 = นัดปกติ (เหมือน plubplachai-alert) — อื่นๆ ถือว่ายกเลิก; เพิ่มรหัสได้ด้วย HOSXP_ACTIVE_STATUS_IDS */
+  active: boolean;
+  /** มี visit ผูกกับนัด = มาตามนัดแล้ว */
+  came: boolean;
+}
+
+export function hosxpActiveStatus(status: unknown): boolean {
+  const accepted = ["NULL", "1", ...(process.env.HOSXP_ACTIVE_STATUS_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean)];
+  return accepted.includes(status == null ? "NULL" : String(status));
+}
+
+// o.* เพราะคอลัมน์ของ oapp ต่างกันตามเวอร์ชัน (app_cause / note / nexttime_end มีใน HOSxP ของ รพ. — ดูจาก debug trace หน้าจอนัด)
+const OAPP_SQL = `SELECT o.*, c.name AS clinic_name, k.department AS department_name, d.name AS doctor_name
+  FROM oapp o LEFT JOIN clinic c ON c.clinic = o.clinic
+  LEFT JOIN doctor d ON d.code = o.doctor LEFT JOIN kskdepartment k ON k.depcode = o.depcode`;
+
+function toHosxpAppointment(r: Record<string, unknown>): HosxpAppointment {
+  return {
+    oapp_id: String(r.oapp_id),
+    date: String(r.nextdate).slice(0, 10),
+    time: r.nexttime ? String(r.nexttime).slice(0, 8) : null,
+    clinic: pick(r, "clinic_name", "clinic"),
+    place: pick(r, "contact_point", "department_name"),
+    doctor: pick(r, "doctor_name"),
+    cause: pick(r, "app_cause"),
+    note: pick(r, "note"),
+    status: r.oapp_status_id == null ? null : String(r.oapp_status_id),
+    active: hosxpActiveStatus(r.oapp_status_id),
+    came: !!pick(r, "visit_vn"),
+  };
+}
+
+/** นัดทั้งหมดของ HN ตั้งแต่วันที่ from (ทุกคลินิก) — ไม่ cache: ต้องเห็นสถานะล่าสุด */
+export async function findHosxpAppointments(hn: string, from: string): Promise<HosxpAppointment[]> {
+  const [rows] = await hosxpDb.query<mysql.RowDataPacket[]>(
+    `${OAPP_SQL} WHERE o.hn = ? AND o.nextdate >= ? ORDER BY o.nextdate, o.nexttime LIMIT 200`,
+    [hn, from],
+  );
+  return rows.map((r) => toHosxpAppointment(r as Record<string, unknown>));
+}
+
+/** สถานะล่าสุดของนัดที่ดึงมาแล้ว (ตาม oapp_id) — ไม่พบ = ถูกลบใน HOSxP */
+export async function readHosxpAppointments(oappIds: string[]): Promise<Map<string, HosxpAppointment>> {
+  const out = new Map<string, HosxpAppointment>();
+  const ids = [...new Set(oappIds)].filter((id) => /^\d{1,20}$/.test(id));
+  for (let i = 0; i < ids.length; i += 200) {
+    const batch = ids.slice(i, i + 200);
+    const [rows] = await hosxpDb.query<mysql.RowDataPacket[]>(`${OAPP_SQL} WHERE o.oapp_id IN (${batch.map(() => "?").join(",")})`, batch);
+    for (const r of rows) out.set(String(r.oapp_id), toHosxpAppointment(r as Record<string, unknown>));
+  }
+  return out;
+}

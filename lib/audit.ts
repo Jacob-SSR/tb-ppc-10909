@@ -4,7 +4,7 @@ import type mysql from "mysql2/promise";
 
 export type Queryable = Pick<mysql.Pool | mysql.PoolConnection, "query" | "execute">;
 
-export type AuditEntity = "patient" | "contact" | "visit" | "settings" | "user" | "system";
+export type AuditEntity = "patient" | "contact" | "visit" | "settings" | "user" | "system" | "appointment";
 
 /** {"ช่อง": [ค่าเดิม, ค่าใหม่]} */
 export type Changes = Record<string, [unknown, unknown]>;

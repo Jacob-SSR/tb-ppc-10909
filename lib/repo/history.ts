@@ -1,4 +1,4 @@
-// lib/repo/history.ts — ประวัติการแก้ไขของผู้ป่วย/ผู้สัมผัส (รวม visit ที่ผูกอยู่) จาก tb_audit_log
+// lib/repo/history.ts — ประวัติการแก้ไขของผู้ป่วย/ผู้สัมผัส (รวม visit และนัดที่ผูกอยู่) จาก tb_audit_log
 // user unit: ดูได้เฉพาะผู้สัมผัสในเขต และเห็นเฉพาะรายการที่หน่วยตัวเองทำ + ที่ย้ายจากระบบเดิม (§5.1)
 import type { Queryable } from "../audit.ts";
 import { forbidden, notFound } from "../errors.ts";
@@ -19,9 +19,10 @@ export async function loadHistory(db: Queryable, id: string, actor: Actor): Prom
        LEFT JOIN tb_units un ON un.id = u.unit_id
       WHERE (a.entity = ? AND a.entity_id = ?)
          OR (a.entity = 'visit' AND a.entity_id IN (SELECT v.id FROM tb_visits v WHERE v.${isPatient ? "patient_id" : "contact_id"} = ?))
+         OR (a.entity = 'appointment' AND a.entity_id IN (SELECT n.id FROM tb_appointments n WHERE n.${isPatient ? "patient_id" : "contact_id"} = ?))
       ORDER BY a.at DESC, a.id DESC
       LIMIT 300`,
-    [isPatient ? "patient" : "contact", id, id],
+    [isPatient ? "patient" : "contact", id, id, id],
   );
   return actor.role === "admin" ? rows : rows.filter((r) => r.by_unit_id === actor.unitId || r.by_unit_id === null);
 }

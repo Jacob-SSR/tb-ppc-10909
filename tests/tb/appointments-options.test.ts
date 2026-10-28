@@ -1,28 +1,30 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { groupAppointments, latestAppointments } from "../../lib/tb/appointments.ts";
+import { apptSummary, groupAppointments, pendingAppointments } from "../../lib/tb/appointments.ts";
 import { DEFAULT_FOLLOWUP_SLOTS } from "../../lib/tb/constants.ts";
 import { CONTACT_TYPE_SHEET_LABEL, contactTypeFromLabel } from "../../lib/tb/options.ts";
 import { CONTACT_SHEET_COLUMNS, PATIENT_SHEET_COLUMNS, VISIT_SHEET_COLUMNS } from "../../lib/tb/sheetColumns.ts";
 
-const v = (id: string, ref: { patient_id?: string; contact_id?: string }, visit_date: string, next_appt: string | null, updated_at = `${visit_date} 10:00:00`) => ({
-  id, patient_id: ref.patient_id ?? null, contact_id: ref.contact_id ?? null, visit_date, visit_type: "ติดตามอาการ/รับยา", detail: "x", next_appt, updated_at,
+const a = (id: string, ref: { patient_id?: string; contact_id?: string }, appt_date: string, status = "scheduled", appt_time: string | null = null) => ({
+  id, patient_id: ref.patient_id ?? null, contact_id: ref.contact_id ?? null, appt_date, appt_time, purpose: "รับยา", place: null,
+  status: status as "scheduled",
 });
 
-test("latestAppointments: นัดจากบันทึกครั้งล่าสุดของแต่ละราย", () => {
-  const list = latestAppointments([
-    v("V1", { patient_id: "P1" }, "2026-10-01", "2026-10-15"),
-    v("V2", { patient_id: "P1" }, "2026-10-15", "2026-11-12"), // มาตามนัด → นัดย้าย
-    v("V3", { contact_id: "C1" }, "2026-10-10", "2026-10-20"),
-    v("V4", { contact_id: "C1" }, "2026-10-18", null), // บันทึกล่าสุดไม่มีนัด → ไม่มีนัดค้าง
-    v("V5", { patient_id: "P2" }, "2026-10-05", "2026-10-19", "2026-10-05 09:00:00"),
-    v("V6", { patient_id: "P2" }, "2026-10-05", "2026-10-26", "2026-10-05 15:00:00"), // วันเดียวกัน ใช้ที่บันทึกทีหลัง
-    v("V7", { patient_id: "P3" }, "2026-10-05", "2026-10-22"),
-  ], (pid) => pid !== "P3"); // P3 สรุปผลแล้ว
-  assert.deepEqual(list.map((a) => [a.refId, a.kind, a.appt, a.last.id]), [
-    ["P2", "P", "2026-10-26", "V6"],
-    ["P1", "P", "2026-11-12", "V2"],
+test("pendingAppointments: เฉพาะนัดที่ยังค้าง เรียงวัน-เวลา ไม่รวมผู้ป่วยที่สรุปผลแล้ว", () => {
+  const list = pendingAppointments([
+    a("A1", { patient_id: "P1" }, "2026-11-12"),
+    a("A2", { patient_id: "P1" }, "2026-10-15", "done"), // มาตามนัดแล้ว
+    a("A3", { contact_id: "C1" }, "2026-10-20", "cancelled"),
+    a("A4", { contact_id: "C1" }, "2026-10-26", "scheduled", "13:00:00"),
+    a("A5", { patient_id: "P2" }, "2026-10-26", "scheduled", "08:30:00"),
+    a("A6", { patient_id: "P3" }, "2026-10-22"), // P3 สรุปผลแล้ว
+  ], (pid) => pid !== "P3");
+  assert.deepEqual(list.map((x) => [x.row.id, x.kind, x.refId, x.appt]), [
+    ["A5", "P", "P2", "2026-10-26"],
+    ["A4", "C", "C1", "2026-10-26"],
+    ["A1", "P", "P1", "2026-11-12"],
   ]);
+  assert.equal(apptSummary({ appt_time: "08:30:00", purpose: "ตรวจเสมหะ (AFB)", place: "คลินิกวัณโรค" }), "08:30 · ตรวจเสมหะ (AFB) · คลินิกวัณโรค");
 });
 
 test("groupAppointments: ขาดนัด / วันนี้ / พรุ่งนี้ / 7 วัน / หลังจากนั้น", () => {

@@ -8,6 +8,7 @@ import { patientStart } from "@/lib/tb/tasks";
 import { api } from "./api";
 import { ContactCard, ContactSummaryLine, Info, isRR, OutcomeBadge, patientAddress, TaskLine, th } from "./bits";
 import { useApp } from "./store";
+import { ApptSection } from "./Appointments";
 import { Timeline } from "./Timeline";
 import { exportPatientWord } from "./wordExports";
 
@@ -128,6 +129,7 @@ export function PatientDetail({ id }: { id: string }) {
         </div>
       </Section>
 
+      <ApptSection patientId={id} hn={p.hn} canAdd={isAdmin} back={{ type: "patient", id }} />
       {isAdmin && <Timeline refId={id} label={p.name} canAdd />}
 
       {(episodes.length > 0 || asContact.length > 0) && (

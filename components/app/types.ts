@@ -1,4 +1,5 @@
 // รูปข้อมูลที่ /api/data ส่งมา (ชื่อคอลัมน์ตาม schema)
+import type { ApptSource, ApptStatus } from "@/lib/tb/appointments";
 import type { ContactSummary } from "@/lib/tb/contacts";
 import type { ContactRow, FollowupRow, PatientRow, TargetRow, UnitRole } from "@/lib/tb/types";
 
@@ -22,6 +23,28 @@ export interface Visit {
   by_name: string;
   by_unit_id: number;
   by_unit_name: string;
+}
+
+/** นัดหมาย (tb_appointments) */
+export interface Appt {
+  id: string;
+  patient_id: string | null;
+  contact_id: string | null;
+  appt_date: string;
+  appt_time: string | null;
+  purpose: string;
+  place: string | null;
+  doctor_name: string | null;
+  note: string | null;
+  status: ApptStatus;
+  source: ApptSource;
+  visit_id: string | null;
+  hosxp_oapp_id: string | null;
+  hosxp_status: string | null;
+  version: number;
+  updated_at: string;
+  by_name: string | null;
+  by_unit_name: string | null;
 }
 
 export interface Unit {
@@ -48,6 +71,7 @@ export interface AppData {
   patients: Patient[];
   contacts: Contact[];
   visits: Visit[];
+  appointments: Appt[];
   followups: Followup[];
   contactSummary: Record<string, ContactSummary>;
   settings: Record<string, string>;

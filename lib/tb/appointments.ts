@@ -1,54 +1,70 @@
-// lib/tb/appointments.ts
-// นัดหมาย = "วันนัดครั้งถัดไป" ของบันทึกครั้งล่าสุดของแต่ละราย (appointments_ / apptList เดิม)
-// มาตามนัดแล้วบันทึกครั้งใหม่ → นัดย้ายตามบันทึกใหม่เอง; บันทึกล่าสุดไม่มีวันนัด = ไม่มีนัดค้าง
-// ใช้ทั้งหน้า "นัดหมาย" และแจ้งเตือน 07:00 (ขาดนัด / วันนี้ / พรุ่งนี้)
+// lib/tb/appointments.ts — นัดหมาย (tb_appointments) ส่วนที่เป็นตรรกะล้วน ใช้ทั้งหน้าเว็บและแจ้งเตือน 07:00
+//   นัดค้าง = status 'scheduled' (เลยวันแล้วยังไม่บันทึกว่ามา = ขาดนัด)
+//   บันทึกรายครั้งใหม่ → นัดเดิมที่ถึงวันแล้วถือว่ามาตามนัด, next_appt → นัดใหม่ (ทำใน lib/repo/appointments.ts)
+//   ไม่แสดงนัดของผู้ป่วยที่สรุปผลการรักษาแล้ว (กติกาเดิม)
 
 import { addDays, type IsoDate } from "./dates.ts";
-import type { VisitRow } from "./types.ts";
 
-export interface Appointment {
+export const APPT_STATUS_LABEL = {
+  scheduled: "นัดไว้",
+  done: "มาตามนัด",
+  missed: "ขาดนัด",
+  cancelled: "ยกเลิก",
+} as const;
+export type ApptStatus = keyof typeof APPT_STATUS_LABEL;
+
+export const APPT_SOURCE_LABEL = { manual: "คีย์เอง", visit: "จากบันทึกรายครั้ง", hosxp: "HOSxP" } as const;
+export type ApptSource = keyof typeof APPT_SOURCE_LABEL;
+
+/** เรื่องที่นัดที่ใช้บ่อย (พิมพ์อย่างอื่นเองได้) */
+export const APPT_PURPOSES = [
+  "รับยา / ติดตามอาการ",
+  "ตรวจเสมหะ (AFB)",
+  "เอกซเรย์ปอด (CXR)",
+  "เจาะเลือด / ผล LFT",
+  "พบแพทย์",
+  "DOT / เยี่ยมบ้าน",
+  "รับยา TPT",
+  "คัดกรองผู้สัมผัส (ซักอาการ + CXR)",
+  "ติดตามผู้สัมผัส (6/12/18/24 เดือน)",
+] as const;
+
+export interface ApptRow {
+  id: string;
+  patient_id: string | null;
+  contact_id: string | null;
+  appt_date: IsoDate;
+  appt_time: string | null;
+  purpose: string;
+  place: string | null;
+  status: ApptStatus;
+}
+
+export interface Appointment<R extends ApptRow = ApptRow> {
   kind: "P" | "C";
   refId: string;
   appt: IsoDate;
-  last: Pick<VisitRow, "id" | "visit_date" | "visit_type" | "detail">;
+  row: R;
 }
 
-type VisitFields = Pick<VisitRow, "id" | "patient_id" | "contact_id" | "visit_date" | "visit_type" | "detail" | "next_appt" | "updated_at">;
-
-/**
- * นัดค้างของแต่ละราย จาก visit ที่ยังไม่ถูกลบ
- * isActivePatient: ผู้ป่วยที่สรุปผลแล้ว (outcome ≠ กำลังรักษา) ไม่ต้องแสดงนัด
- */
-export function latestAppointments(
-  visits: readonly VisitFields[],
+/** นัดที่ยังค้าง (scheduled) เรียงตามวัน-เวลา — isActivePatient: ผู้ป่วยที่สรุปผลแล้วไม่ต้องแสดง */
+export function pendingAppointments<R extends ApptRow>(
+  rows: readonly R[],
   isActivePatient: (patientId: string) => boolean = () => true,
-): Appointment[] {
-  const latest = new Map<string, VisitFields>();
-  for (const v of visits) {
-    const ref = v.patient_id ?? v.contact_id;
-    if (!ref) continue;
-    const cur = latest.get(ref);
-    if (!cur || v.visit_date > cur.visit_date || (v.visit_date === cur.visit_date && v.updated_at > cur.updated_at)) {
-      latest.set(ref, v);
-    }
-  }
-  const out: Appointment[] = [];
-  for (const [refId, v] of latest) {
-    if (!v.next_appt) continue;
-    const kind = v.patient_id ? "P" : "C";
-    if (kind === "P" && !isActivePatient(refId)) continue;
-    out.push({
-      kind,
-      refId,
-      appt: v.next_appt,
-      last: { id: v.id, visit_date: v.visit_date, visit_type: v.visit_type, detail: v.detail },
-    });
-  }
-  return out.sort((a, b) => (a.appt < b.appt ? -1 : a.appt > b.appt ? 1 : 0));
+): Appointment<R>[] {
+  return rows
+    .filter((r) => r.status === "scheduled" && (!r.patient_id || isActivePatient(r.patient_id)))
+    .map((r) => ({ kind: r.patient_id ? ("P" as const) : ("C" as const), refId: (r.patient_id ?? r.contact_id)!, appt: r.appt_date, row: r }))
+    .sort((a, b) => `${a.appt} ${a.row.appt_time ?? ""}`.localeCompare(`${b.appt} ${b.row.appt_time ?? ""}`));
+}
+
+/** ข้อความสั้นของนัด: "08:30 · ตรวจเสมหะ (AFB) · คลินิกวัณโรค" */
+export function apptSummary(r: Pick<ApptRow, "appt_time" | "purpose" | "place">): string {
+  return [r.appt_time?.slice(0, 5), r.purpose, r.place].filter(Boolean).join(" · ");
 }
 
 export interface AppointmentGroups<T extends { appt: IsoDate }> {
-  missed: T[]; // เลยวันนัดแล้วยังไม่มีบันทึกการมา
+  missed: T[]; // เลยวันนัดแล้วยังไม่ได้บันทึกว่ามา
   today: T[];
   tomorrow: T[];
   week: T[]; // หลังพรุ่งนี้ ถึง 7 วัน

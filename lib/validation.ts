@@ -171,3 +171,31 @@ export const visitInput = z
   .refine((v) => !!v.patient_id !== !!v.contact_id, { message: "ต้องระบุผู้ป่วยหรือผู้สัมผัสอย่างใดอย่างหนึ่ง", path: ["patient_id"] })
   .refine((v) => !v.next_appt || v.next_appt > v.visit_date, { message: "วันนัดต้องอยู่หลังวันที่บันทึก", path: ["next_appt"] });
 export type VisitInput = z.infer<typeof visitInput>;
+
+// ── นัดหมาย (tb_appointments) ───────────────────────────────────────────────────
+
+export const APPT_STATUSES = ["scheduled", "done", "missed", "cancelled"] as const;
+
+/** เวลา "8:30" / "08:30" / "08:30:00" → "08:30:00" (รูปเดียวกับคอลัมน์ TIME ที่ DB คืนมา — diff จะไม่เพี้ยน) */
+const time = z.preprocess((v) => {
+  if (blank(v)) return null;
+  const m = /^(\d{1,2})[:.](\d{2})(?::\d{2})?$/.exec(String(v).trim());
+  return m ? `${m[1].padStart(2, "0")}:${m[2]}:00` : "invalid";
+}, z.string().regex(/^([01]\d|2[0-3]):[0-5]\d:00$/, "เวลาไม่ถูกต้อง (เช่น 08:30)").nullable());
+
+export const appointmentInput = z
+  .object({
+    patient_id: id("P").nullable().optional(),
+    contact_id: id("C").nullable().optional(),
+    appt_date: z.preprocess((v) => (blank(v) ? "" : toIso(v) ?? "invalid"), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "กรุณาระบุวันนัด")),
+    appt_time: time,
+    purpose: requiredText(100, "เรื่องที่นัด"),
+    place: text(150),
+    doctor_name: text(150),
+    note: text(2000),
+    status: z.enum(APPT_STATUSES).default("scheduled"),
+    hosxp_oapp_id: z.preprocess((v) => (blank(v) ? null : String(v).trim()), z.string().regex(/^\d{1,20}$/, "รหัสนัด HOSxP ไม่ถูกต้อง").nullable()).optional(),
+    hosxp_status: text(20).optional(),
+  })
+  .refine((v) => !!v.patient_id !== !!v.contact_id, { message: "ต้องระบุผู้ป่วยหรือผู้สัมผัสอย่างใดอย่างหนึ่ง", path: ["patient_id"] });
+export type AppointmentInput = z.infer<typeof appointmentInput>;

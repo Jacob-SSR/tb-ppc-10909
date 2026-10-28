@@ -2,15 +2,17 @@
 // แท็บ นัดหมาย (รายการ/ปฏิทิน) และ ต้องติดตาม
 import { useState } from "react";
 import { Badge, Button, Empty, Select } from "@/components/ui";
-import { groupAppointments, type Appointment } from "@/lib/tb/appointments";
+import { apptSummary, groupAppointments, type Appointment } from "@/lib/tb/appointments";
 import { addDays, diffDays, formatThaiDate } from "@/lib/tb/dates";
 import { Tel, th, useAppointments } from "./bits";
 import { useApp, type DueItem } from "./store";
-import type { Contact, Patient } from "./types";
+import { useApptStatus } from "./Appointments";
+import type { Appt, Contact, Patient } from "./types";
 import { exportApptWord, exportDueWord } from "./wordExports";
 
-function Row({ date, late, tone, title, kind, sub, onClick }: {
+function Row({ date, late, tone, title, kind, sub, onClick, action }: {
   date: string; late?: number; tone: "late" | "soon" | "later"; title: React.ReactNode; kind: "P" | "C"; sub: React.ReactNode; onClick: () => void;
+  action?: React.ReactNode;
 }) {
   const border = tone === "late" ? "border-l-bad" : tone === "soon" ? "border-l-warn" : "border-l-brand-2";
   return (
@@ -23,6 +25,7 @@ function Row({ date, late, tone, title, kind, sub, onClick }: {
         <div>{title} <Badge tone={kind === "C" ? "contact" : "brand"}>{kind === "C" ? "ผู้สัมผัส" : "ผู้ป่วย"}</Badge></div>
         <div className="mt-0.5 text-muted">{sub}</div>
       </div>
+      {action && <div className="flex-none self-center" onClick={(e) => e.stopPropagation()}>{action}</div>}
     </div>
   );
 }
@@ -60,17 +63,19 @@ export function AppointmentsTab() {
   const [month, setMonth] = useState(data.today.slice(0, 7));
   const [day, setDay] = useState("");
 
+  const setStatus = useApptStatus();
   const items = all
     .map((a) => ({ a, r: lookup(a.kind, a.refId) }))
-    .filter((x): x is { a: Appointment; r: NonNullable<ReturnType<typeof lookup>> } => !!x.r)
+    .filter((x): x is { a: Appointment<Appt>; r: NonNullable<ReturnType<typeof lookup>> } => !!x.r)
     .filter((x) => !unit || String(x.r.rec.unit_id) === unit);
   const g = groupAppointments(items.map((x) => ({ ...x, appt: x.a.appt })), data.today);
   const row = (x: (typeof items)[number]) => (
-    <Row key={x.a.refId} date={x.a.appt} late={x.a.appt < data.today ? diffDays(x.a.appt, data.today) : 0}
+    <Row key={x.a.row.id} date={x.a.appt} late={x.a.appt < data.today ? diffDays(x.a.appt, data.today) : 0}
       tone={x.a.appt < data.today ? "late" : x.a.appt <= addDays(data.today, 1) ? "soon" : "later"}
       title={<b>{x.r.rec.name}</b>} kind={x.a.kind}
-      sub={<>{x.r.sub}<div>ครั้งล่าสุด {th(x.a.last.visit_date)} · {x.a.last.visit_type}: {String(x.a.last.detail ?? "").slice(0, 80)}</div></>}
-      onClick={x.r.onClick} />
+      sub={<>{x.r.sub}<div className="text-foreground">{apptSummary(x.a.row)}{x.a.row.source === "hosxp" ? " · HOSxP" : ""}</div></>}
+      onClick={() => store.open({ type: "appointment", appt: x.a.row })}
+      action={(isAdmin || x.a.kind === "C") && <Button size="sm" variant="ghost" onClick={() => setStatus(x.a.row, "done")}>✓ มาแล้ว</Button>} />
   );
   const groups: [string, typeof items, string][] = [
     ["ขาดนัด (เลยวันนัดแล้วยังไม่มีบันทึกการมา)", g.missed, "text-bad"], ["นัดวันนี้", g.today, "text-warn"], ["นัดพรุ่งนี้", g.tomorrow, "text-warn"],
@@ -80,7 +85,8 @@ export function AppointmentsTab() {
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <p className="flex-1 text-sm text-muted">นัดจากบันทึกการรักษา/ติดตามครั้งล่าสุดของแต่ละราย · มาตามนัดแล้วเพิ่มบันทึกใหม่ (พร้อมนัดครั้งถัดไป) นัดจะย้ายเอง</p>
+        <p className="flex-1 text-sm text-muted">นัดที่ยังค้าง · กดที่รายการเพื่อแก้/เลื่อน/ยกเลิก · บันทึกการรักษาใหม่ = มาตามนัดให้อัตโนมัติ · ใส่ &quot;วันนัดครั้งถัดไป&quot; ในบันทึก = สร้างนัดให้</p>
+        <Button size="sm" onClick={() => store.open({ type: "pickAppt" })}>+ เพิ่มนัด</Button>
         {isAdmin && <Select className="w-auto" options={data.units.map((u) => ({ value: u.id, label: u.name }))} placeholder="ทุกหน่วย" value={unit} onChange={(e) => setUnit(e.target.value)} />}
         <div className="flex overflow-hidden rounded-xl border border-brand">
           {(["list", "cal"] as const).map((v) => (
@@ -89,11 +95,11 @@ export function AppointmentsTab() {
         </div>
         <Button variant="ghost" size="sm" disabled={!items.length} onClick={() => exportApptWord(
           store,
-          groups.map(([title, list]) => [title, list.map((x) => ({ appt: x.a.appt, kind: x.a.kind, rec: x.r.rec, last: x.a.last }))]),
+          groups.map(([title, list]) => [title, list.map((x) => ({ appt: x.a.appt, kind: x.a.kind, rec: x.r.rec, summary: apptSummary(x.a.row) }))]),
           unit ? unitName(Number(unit)) : isAdmin ? "" : data.user.unitName,
         )}>📄 ส่งออก Word</Button>
       </div>
-      {!items.length && <Empty>ยังไม่มีนัดหมาย · ใส่ &quot;วันนัดครั้งถัดไป&quot; ตอนบันทึกการรักษาในหน้าผู้ป่วยหรือผู้สัมผัส</Empty>}
+      {!items.length && <Empty>ยังไม่มีนัดค้าง · กด &quot;+ เพิ่มนัด&quot; หรือใส่ &quot;วันนัดครั้งถัดไป&quot; ตอนบันทึกการรักษา</Empty>}
       {view === "list"
         ? groups.map(([title, list, cls]) => list.length > 0 && (
             <div key={title} className="mb-4"><h3 className={`mb-2 text-base font-semibold ${cls}`}>{title} ({list.length})</h3>{list.map(row)}</div>
@@ -140,7 +146,7 @@ function Calendar<T extends { a: Appointment; r: { rec: { name: string } } }>({ 
                 {list.length > 0 && <span className={`rounded-full px-1.5 text-[10px] text-white ${key < today ? "bg-bad" : "bg-brand-2"}`}>{list.length}</span>}
               </div>
               <div className="hidden sm:block">
-                {list.slice(0, 3).map((x) => <div key={x.a.refId} className={`mt-0.5 truncate rounded px-1 text-[11px] ${key < today ? "bg-bad-bg text-bad" : x.a.kind === "C" ? "bg-contact-bg text-contact" : "bg-mint text-brand"}`}>{x.r.rec.name}</div>)}
+                {list.slice(0, 3).map((x) => <div key={x.a.row.id} className={`mt-0.5 truncate rounded px-1 text-[11px] ${key < today ? "bg-bad-bg text-bad" : x.a.kind === "C" ? "bg-contact-bg text-contact" : "bg-mint text-brand"}`}>{x.r.rec.name}</div>)}
                 {list.length > 3 && <div className="text-[11px] text-muted">+{list.length - 3} ราย</div>}
               </div>
             </button>

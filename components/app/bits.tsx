@@ -1,7 +1,7 @@
 "use client";
 // ชิ้นส่วนแสดงผลที่ใช้หลายหน้า
 import { Badge, Card } from "@/components/ui";
-import { latestAppointments } from "@/lib/tb/appointments";
+import { pendingAppointments } from "@/lib/tb/appointments";
 import { CONTACT_TYPE_LABEL, OUTCOME_ONGOING } from "@/lib/tb/constants";
 import { emptyContactSummary, formatContactSummary, isTB } from "@/lib/tb/contacts";
 import { diffDays, formatThaiDate } from "@/lib/tb/dates";
@@ -41,12 +41,12 @@ export function Tel({ phone }: { phone: string | null | undefined }) {
   );
 }
 
-/** นัดค้างของรายนั้น (จากบันทึกล่าสุด) */
+/** นัดที่ยังค้าง (tb_appointments status = นัดไว้) — ไม่รวมผู้ป่วยที่สรุปผลแล้ว */
 export function useAppointments() {
   const { data } = useApp();
   return useMemo(() => {
     const active = new Map(data.patients.map((p) => [p.id, !isConcluded(p.outcome)]));
-    return latestAppointments(data.visits, (pid) => active.get(pid) ?? true);
+    return pendingAppointments(data.appointments, (pid) => active.get(pid) ?? true);
   }, [data]);
 }
 

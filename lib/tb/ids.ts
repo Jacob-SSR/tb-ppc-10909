@@ -3,9 +3,9 @@
 
 import { randomBytes } from "node:crypto";
 
-export type EntityPrefix = "P" | "C" | "V";
+export type EntityPrefix = "P" | "C" | "V" | "A";
 
-const ID_RE = /^[PCV][0-9a-f]{10}$/;
+const ID_RE = /^[PCVA][0-9a-f]{10}$/;
 
 export function newEntityId(prefix: EntityPrefix): string {
   return prefix + randomBytes(5).toString("hex");
