@@ -90,7 +90,7 @@ function Shell() {
       {modal?.type === "history" && <History id={modal.id} title={modal.title} back={modal.back} />}
       {modal?.type === "appointment" && <AppointmentForm key={modal.appt.id ?? "new"} appt={modal.appt} back={modal.back} />}
       {modal?.type === "pickAppt" && <PickApptRef />}
-      {modal?.type === "hosxpAppts" && <HosxpApptPicker patientId={modal.patientId} />}
+      {modal?.type === "hosxpAppts" && <HosxpApptPicker patientId={modal.patientId} contactId={modal.contactId} back={modal.back} />}
     </>
   );
 }

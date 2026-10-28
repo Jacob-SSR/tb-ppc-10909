@@ -8,6 +8,9 @@ import { th } from "./bits";
 import { useApp, type ModalState } from "./store";
 import type { Appt } from "./types";
 
+/** คลินิกนัดผู้สัมผัส (ชื่อเดียวกับคลินิกใน HOSxP) */
+const APPT_CLINICS = ["Household", "Close contact"] as const;
+
 const STATUS_TONE: Record<ApptStatus, "brand" | "ok" | "bad" | "muted"> = { scheduled: "brand", done: "ok", missed: "bad", cancelled: "muted" };
 
 /** ป้ายสถานะ — นัดไว้แต่เลยวันแล้ว = ขาดนัด (ยังไม่บันทึก) */
@@ -51,7 +54,7 @@ export function AppointmentForm({ appt, back }: { appt: Partial<Appt>; back?: Mo
   const canEdit = isAdmin || !!appt.contact_id; // user unit เห็นเฉพาะผู้สัมผัสในเขตอยู่แล้ว
   const [f, setF] = useState({
     appt_date: appt.appt_date ?? "", appt_time: toTime(appt.appt_time), purpose: appt.purpose ?? "",
-    place: appt.place ?? (isAdmin ? "" : data.user.unitName), doctor_name: appt.doctor_name ?? "", note: appt.note ?? "",
+    place: appt.place ?? (isNew && person && "contact_type" in person ? APPT_CLINICS[person.contact_type === "close" ? 1 : 0] : isAdmin ? "" : data.user.unitName), doctor_name: appt.doctor_name ?? "", note: appt.note ?? "",
     status: (appt.status ?? "scheduled") as ApptStatus,
   });
   const [busy, setBusy] = useState(false);
@@ -123,7 +126,7 @@ export function AppointmentForm({ appt, back }: { appt: Partial<Appt>; back?: Mo
           <Select placeholder={false} options={(Object.keys(APPT_STATUS_LABEL) as ApptStatus[]).map((s) => ({ value: s, label: APPT_STATUS_LABEL[s] }))} {...bind("status")} />
         </Field>
         <Field label="เรื่องที่นัด *" wide><ComboInput listId="dl-appt-purpose" options={APPT_PURPOSES} {...bind("purpose")} /></Field>
-        <Field label="สถานที่ / คลินิก"><Input {...bind("place")} placeholder="เช่น คลินิกวัณโรค, รพ.สต.ตาพระ" /></Field>
+        <Field label="คลินิก / สถานที่"><ComboInput listId="dl-appt-place" options={[...APPT_CLINICS, "คลินิกวัณโรค", data.user.unitName]} {...bind("place")} /></Field>
         <Field label="แพทย์ / ผู้นัด"><Input {...bind("doctor_name")} /></Field>
         <Field label="หมายเหตุ" wide><Textarea rows={2} {...bind("note")} placeholder="เช่น งดน้ำงดอาหาร, เก็บเสมหะตอนเช้า 2 ตลับ" /></Field>
       </Grid>
@@ -176,8 +179,8 @@ export function ApptSection({ patientId, contactId, hn, canAdd, back }: {
       {canAdd && (
         <div className="mt-3 flex flex-wrap gap-2">
           <Button size="sm" onClick={() => open({ type: "appointment", appt: { patient_id: patientId ?? null, contact_id: contactId ?? null }, back })}>+ นัดหมาย</Button>
-          {isAdmin && patientId && hn && data.features.hosxp && (
-            <Button size="sm" variant="ghost" onClick={() => open({ type: "hosxpAppts", patientId })}>ดึงนัดจาก HOSxP</Button>
+          {isAdmin && hn && data.features.hosxp && (
+            <Button size="sm" variant="ghost" onClick={() => open({ type: "hosxpAppts", patientId, contactId, back })}>ดึงนัดจาก HOSxP</Button>
           )}
         </div>
       )}
@@ -218,18 +221,18 @@ export function PickApptRef() {
 
 interface HosxpAppt {
   oapp_id: string; date: string; time: string | null; clinic: string; place: string; doctor: string; cause: string; note: string;
-  status: string | null; active: boolean; came: boolean; imported: string | null;
+  status: string | null; active: boolean; came: boolean; tbClinic: boolean; imported: string | null;
 }
 
-/** นัดใน HOSxP ของผู้ป่วย (oapp) → เลือกดึงเข้าระบบ (ดึงซ้ำ = อัปเดตรายการเดิม) */
-export function HosxpApptPicker({ patientId }: { patientId: string }) {
-  const { open, patientById, reload } = useApp();
-  const p = patientById(patientId);
+/** นัดใน HOSxP (oapp) ของผู้ป่วย/ผู้สัมผัสตาม HN → เลือกดึงเข้าระบบ (ดึงซ้ำ = อัปเดตรายการเดิม)
+ *  นัดคลินิก household / close contact ระบบดึงเองทุกชั่วโมงอยู่แล้ว — หน้านี้ไว้ดึงนัดคลินิกอื่นหรือดึงทันที */
+export function HosxpApptPicker({ patientId, contactId, back }: { patientId?: string; contactId?: string; back: ModalState }) {
+  const { open, patientById, contactById, reload } = useApp();
+  const p = patientId ? patientById(patientId) : contactId ? contactById(contactId) : undefined;
   const [list, setList] = useState<HosxpAppt[] | null>(null);
   const [err, setErr] = useState("");
   const [pick, setPick] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
-  const back: ModalState = { type: "patient", id: patientId };
 
   useEffect(() => {
     if (!p?.hn) return;
@@ -247,7 +250,7 @@ export function HosxpApptPicker({ patientId }: { patientId: string }) {
     try {
       for (const a of (list ?? []).filter((x) => pick.has(x.oapp_id))) {
         await api("POST", "/api/appointments", {
-          patient_id: patientId, contact_id: null, appt_date: a.date, appt_time: a.time, purpose: (a.cause || a.clinic || "นัด HOSxP").slice(0, 100),
+          patient_id: patientId ?? null, contact_id: contactId ?? null, appt_date: a.date, appt_time: a.time, purpose: (a.cause || a.clinic || "นัด HOSxP").slice(0, 100),
           place: [a.clinic, a.place].filter(Boolean).join(" · ").slice(0, 150) || null, doctor_name: a.doctor || null, note: a.note || null,
           status: a.came ? "done" : a.active ? "scheduled" : "cancelled", hosxp_oapp_id: a.oapp_id, hosxp_status: a.status,
         });
@@ -269,7 +272,7 @@ export function HosxpApptPicker({ patientId }: { patientId: string }) {
       wide
       onClose={() => open(back)}
       title="ดึงนัดจาก HOSxP"
-      subtitle={`${p?.name ?? ""} · HN ${p?.hn ?? "-"} · นัดตั้งแต่ 30 วันก่อน (ทุกคลินิก) — อ่านอย่างเดียว ไม่แก้ใน HOSxP`}
+      subtitle={`${p?.name ?? ""} · HN ${p?.hn ?? "-"} · นัดตั้งแต่ 30 วันก่อน (ทุกคลินิก) — อ่านอย่างเดียว ไม่แก้ใน HOSxP · คลินิก household / close contact ระบบดึงให้เองทุกชั่วโมง`}
       footer={<><Button variant="ghost" onClick={() => open(back)}>ปิด</Button><Button onClick={importPicked} disabled={busy || !pick.size}>{busy ? "กำลังดึง…" : `ดึงที่เลือก ${pick.size} รายการ`}</Button></>}
     >
       {err && <p className="text-bad">{err}</p>}
@@ -284,6 +287,7 @@ export function HosxpApptPicker({ patientId }: { patientId: string }) {
             <span className="block text-muted">{[a.clinic, a.place, a.doctor].filter(Boolean).join(" · ")}{a.note ? ` · ${a.note}` : ""}</span>
           </span>
           <span className="flex flex-col items-end gap-1">
+            {a.tbClinic && <Badge tone="contact">คลินิกผู้สัมผัส</Badge>}
             {a.came ? <Badge tone="ok">มาตามนัดแล้ว</Badge> : a.active ? <Badge>นัดไว้</Badge> : <Badge tone="muted">ยกเลิกใน HOSxP</Badge>}
             {a.imported && <Badge tone="muted">ดึงแล้ว (ดึงซ้ำ = อัปเดต)</Badge>}
           </span>

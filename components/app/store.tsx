@@ -16,7 +16,7 @@ export type ModalState =
   | { type: "history"; id: string; title: string; back?: ModalState }
   | { type: "appointment"; appt: Partial<Appt>; back?: ModalState }
   | { type: "pickAppt" }
-  | { type: "hosxpAppts"; patientId: string };
+  | { type: "hosxpAppts"; patientId?: string; contactId?: string; back: ModalState };
 
 export interface DueItem extends Task {
   kind: "P" | "C";

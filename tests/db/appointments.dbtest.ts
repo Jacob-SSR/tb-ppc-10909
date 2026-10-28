@@ -11,7 +11,7 @@ import type { Actor } from "../../lib/repo/common.ts";
 import { createVisit, deleteVisit, updateVisit } from "../../lib/repo/visits.ts";
 import { newEntityId } from "../../lib/tb/ids.ts";
 import { appointmentInput, visitInput } from "../../lib/validation.ts";
-import { refreshHosxpAppointments } from "../../lib/worker/hosxpAppointments.ts";
+import { refreshHosxpAppointments, syncClinicAppointments } from "../../lib/worker/hosxpAppointments.ts";
 
 let admin: Actor;
 let unit: Actor;
@@ -115,7 +115,7 @@ test("นัดจาก HOSxP: ดึงซ้ำไม่เพิ่มซ้
 
   const ids = { came: first.id, cancel: (await mk(o2)).id, gone: (await mk(o3)).id, moved: (await mk(o4)).id };
   const h = (id: string, o: Partial<HosxpAppointment>): [string, HosxpAppointment] => [id, {
-    oapp_id: id, date: "2026-12-01", time: null, clinic: "", place: "", doctor: "", cause: "", note: "", status: "1", active: true, came: false, ...o,
+    oapp_id: id, date: "2026-12-01", time: null, clinic: "", place: "", doctor: "", cause: "", note: "", status: "1", active: true, came: false, tbClinic: false, ...o,
   }];
   const fake = async () => new Map([
     h(o1, { came: true, date: "2026-12-02" }), h(o2, { status: "3", active: false }), h(o4, { date: "2026-12-15", time: "09:00:00" }),
@@ -128,4 +128,30 @@ test("นัดจาก HOSxP: ดึงซ้ำไม่เพิ่มซ้
   assert.equal((await appt(ids.gone)).status, "cancelled");
   const moved = await appt(ids.moved);
   assert.deepEqual([moved.status, moved.appt_date, moved.appt_time], ["scheduled", "2026-12-15", "09:00:00"]);
+});
+
+test("ดึงนัดคลินิก household / close contact อัตโนมัติ: จับคู่ HN / เลขบัตร / ผู้ป่วย, ไม่ซ้ำ, ข้ามที่ยกเลิก", async () => {
+  const tag = Date.now().toString().slice(-7);
+  const cid = `9${tag}00000`.slice(0, 13);
+  const cHn = newEntityId("C");
+  await tbDb.query("INSERT INTO tb_contacts SET ?", [{ id: cHn, patient_id: patientId, name: "ผู้สัมผัส HN", hn: `H${tag}`, contact_type: "household", unit_id: unit.unitId }]);
+  const cCid = newEntityId("C");
+  await tbDb.query("INSERT INTO tb_contacts SET ?", [{ id: cCid, patient_id: patientId, name: "ผู้สัมผัส CID", cid, contact_type: "close", unit_id: unit.unitId }]);
+  const o = (n: number) => `7${tag}${n}`;
+  const base = { time: "09:00:00", clinic: "Household", place: "", doctor: "", cause: "คัดกรองผู้สัมผัส", note: "", status: null, active: true, came: false, tbClinic: true };
+  const fake = async () => [
+    { ...base, oapp_id: o(1), date: "2026-12-01", hn: `H${tag}`, cid: "" },
+    { ...base, oapp_id: o(2), date: "2026-12-02", hn: `X${tag}`, cid, clinic: "Close contact" },
+    { ...base, oapp_id: o(3), date: "2026-12-03", hn: "APPT1", cid: "" },              // ผู้ป่วยตาม HN
+    { ...base, oapp_id: o(4), date: "2026-12-04", hn: `NONE${tag}`, cid: "" },         // ไม่อยู่ในทะเบียน
+    { ...base, oapp_id: o(5), date: "2026-12-05", hn: `H${tag}`, cid: "", active: false, status: "3" }, // ยกเลิกแล้ว
+  ];
+  const r = await syncClinicAppointments(tbDb, "2026-11-01", fake);
+  assert.deepEqual([r.read, r.added, r.unmatched], [5, 3, 1]);
+  const [rows] = await tbDb.query<R[]>("SELECT hosxp_oapp_id, patient_id, contact_id, source, status, purpose FROM tb_appointments WHERE hosxp_oapp_id IN (?) ORDER BY hosxp_oapp_id", [[o(1), o(2), o(3)]]);
+  assert.deepEqual(rows.map((x) => [x.contact_id ?? x.patient_id, x.source, x.status]), [
+    [cHn, "hosxp", "scheduled"], [cCid, "hosxp", "scheduled"], [patientId, "hosxp", "scheduled"],
+  ]);
+  const again = await syncClinicAppointments(tbDb, "2026-11-01", fake);
+  assert.equal(again.added, 0); // รันซ้ำไม่เพิ่มซ้ำ
 });

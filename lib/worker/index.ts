@@ -2,6 +2,7 @@
 // เริ่มจาก instrumentation.ts — ปิดได้ด้วย WORKER=0
 //   ทุก 1 นาที  : ส่งคิว outbox ไป Google Sheet
 //   02:00       : rebuild ทุกแท็บจาก MySQL
+//   ทุกชั่วโมง  : ดึงนัดคลินิก household / close contact จาก HOSxP เข้าระบบ (HOSXP_APPT_CLINICS)
 //   06:00       : อัปเดตนัดที่ดึงจาก HOSxP (มาตามนัด / ยกเลิก / เลื่อน)
 //   07:00       : แจ้งนัด (LINE + อีเมล)
 //   ทุกชั่วโมง  : คิวค้าง > 1 ชม. → แจ้ง LINE (ไม่เกินทุก 6 ชม.)
@@ -15,7 +16,7 @@ import { sheetsConfigured } from "../sheets.ts";
 import { todayBangkok } from "../tb/dates.ts";
 import { Mirror } from "./mirror.ts";
 import { hosxpConfigured } from "../hosxp.ts";
-import { refreshHosxpAppointments } from "./hosxpAppointments.ts";
+import { refreshHosxpAppointments, syncClinicAppointments } from "./hosxpAppointments.ts";
 import { checkStaleOutbox, sendDailyReminder } from "./reminders.ts";
 import { googleSheetApi } from "./sheetApi.ts";
 
@@ -93,6 +94,10 @@ async function tick() {
     }
     if (mirror && h === 2 && (await once(`rebuild:${today}`, 26 * 3600))) {
       log("rebuild Sheet:", await mirror.rebuild().catch((e: Error) => e.message));
+    }
+    if (hosxpConfigured() && (await once(`hosxp-clinic-appt:${today}:${h}`, 3600))) {
+      const r = await syncClinicAppointments(tbDb, today).catch((e: Error) => ({ error: e.message }));
+      if (!("added" in r) || r.added) log("ดึงนัดคลินิก household/close contact จาก HOSxP:", r);
     }
     if (h === 6 && hosxpConfigured() && (await once(`hosxp-appt:${today}`, 26 * 3600))) {
       log("อัปเดตนัดจาก HOSxP:", await refreshHosxpAppointments(tbDb).catch((e: Error) => `ล้มเหลว ${e.message}`));

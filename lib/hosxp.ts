@@ -133,7 +133,15 @@ export interface HosxpAppointment {
   active: boolean;
   /** มี visit ผูกกับนัด = มาตามนัดแล้ว */
   came: boolean;
+  /** คลินิกนัดผู้สัมผัส (household / close contact) */
+  tbClinic: boolean;
 }
+
+/** คลินิกที่ใช้นัดผู้สัมผัส — ส่วนหนึ่งของชื่อคลินิกใน HOSxP (ไม่สนตัวพิมพ์) คั่นด้วยจุลภาค */
+export function apptClinicPatterns(): string[] {
+  return (process.env.HOSXP_APPT_CLINICS ?? "household,close contact").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+export const isApptClinic = (name: string, patterns = apptClinicPatterns()) => patterns.some((p) => name.toLowerCase().includes(p));
 
 export function hosxpActiveStatus(status: unknown): boolean {
   const accepted = ["NULL", "1", ...(process.env.HOSXP_ACTIVE_STATUS_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean)];
@@ -158,6 +166,7 @@ function toHosxpAppointment(r: Record<string, unknown>): HosxpAppointment {
     status: r.oapp_status_id == null ? null : String(r.oapp_status_id),
     active: hosxpActiveStatus(r.oapp_status_id),
     came: !!pick(r, "visit_vn"),
+    tbClinic: isApptClinic(pick(r, "clinic_name", "clinic")),
   };
 }
 
@@ -180,4 +189,21 @@ export async function readHosxpAppointments(oappIds: string[]): Promise<Map<stri
     for (const r of rows) out.set(String(r.oapp_id), toHosxpAppointment(r as Record<string, unknown>));
   }
   return out;
+}
+
+/** นัดทุกรายในคลินิกนัดผู้สัมผัส (household / close contact) ช่วง [from, to] — ใช้ดึงอัตโนมัติ
+ *  cid ใช้จับคู่กับผู้สัมผัสที่ไม่มี HN เท่านั้น ไม่เก็บลงระบบ */
+export async function findClinicAppointments(from: string, to: string): Promise<(HosxpAppointment & { hn: string; cid: string })[]> {
+  const patterns = apptClinicPatterns();
+  if (!patterns.length) return [];
+  const [rows] = await hosxpDb.query<mysql.RowDataPacket[]>(
+    `SELECT o.*, c.name AS clinic_name, k.department AS department_name, d.name AS doctor_name, p.cid AS patient_cid
+       FROM oapp o JOIN clinic c ON c.clinic = o.clinic
+       LEFT JOIN doctor d ON d.code = o.doctor LEFT JOIN kskdepartment k ON k.depcode = o.depcode
+       LEFT JOIN patient p ON p.hn = o.hn
+      WHERE o.nextdate BETWEEN ? AND ? AND (${patterns.map(() => "LOWER(c.name) LIKE ?").join(" OR ")})
+      ORDER BY o.nextdate, o.oapp_id LIMIT 5000`,
+    [from, to, ...patterns.map((p) => `%${p.replace(/[%_\\]/g, "\\$&")}%`)],
+  );
+  return rows.map((r) => ({ ...toHosxpAppointment(r as Record<string, unknown>), hn: pick(r, "hn"), cid: pick(r, "patient_cid") }));
 }

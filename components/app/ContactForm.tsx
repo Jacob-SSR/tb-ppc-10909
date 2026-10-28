@@ -203,7 +203,7 @@ export function ContactForm({ contact }: { contact: Partial<Contact> }) {
         </Grid>
       </Section>
 
-      {!isNew && <ApptSection contactId={contact.id!} canAdd={canEdit} back={{ type: "contact", contact }} />}
+      {!isNew && <ApptSection contactId={contact.id!} hn={contact.hn} canAdd={canEdit} back={{ type: "contact", contact }} />}
       {!isNew && <Timeline refId={contact.id!} label={contact.name ?? ""} canAdd={canEdit} />}
       {!canEdit && <Badge tone="muted">ดูได้อย่างเดียว — อยู่นอกเขตรับผิดชอบของหน่วยท่าน</Badge>}
     </Modal>
