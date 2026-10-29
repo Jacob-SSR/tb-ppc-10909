@@ -1,7 +1,7 @@
 // แผนที่: ระยะทาง / พิกัด / ชื่อ / วงผู้สัมผัส + อ่าน Sheet พิกัดบ้าน (ข้อมูลสังเคราะห์)
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseResidents, residentIndex } from "../../lib/pikad.ts";
+import { parseResidents, residentAge, residentIndex } from "../../lib/pikad.ts";
 import { contactTypeOfRing, distanceMeters, formatDistance, nameKey, nearby, parseLatLng, pointOf, ringOf } from "../../lib/tb/geo.ts";
 
 const home = { lat: 14.7, lng: 103.2 };
@@ -45,18 +45,43 @@ test("nearby เรียงใกล้ → ไกล + ใส่วง", () =>
 
 test("parseResidents + residentIndex: จับคู่เลขบัตรก่อน แล้วค่อยชื่อ", () => {
   const rows = [
-    ["14.7, 103.2", "นาย ทดสอบ หนึ่ง", "1-2345-67890-12-3", "01/01/2500", "https://maps.example/1"],
-    ["999, 1", "พิกัดผิด", "", "", ""],
-    ["14.701/103.2", "นางสาว ทดสอบ สอง", "", "2000-05-01", ""],
-    ["", "ไม่มีพิกัด"],
+    ["cid", "pname", "fname", "lname", "latitude", "longitude", "birthdate", "sex", "citizenship", "death", "address", "home_phone", "age_y"],
+    ["1-2345-67890-12-3", "นาย", "ทดสอบ", "หนึ่ง", "14.7", "103.2", "01/01/2500", "1", "99", "N", "12 หมู่ 3", "0123456789", "69"],
+    ["", "", "พิกัดผิด", "", "999", "1", "", "", "", ""],
+    ["", "นางสาว", "ทดสอบ", "สอง", "14.701", "103.2", "2000-05-01", "2", "9A", "Y"],
+    ["", "", "ไม่มีพิกัด", ""],
   ];
   const list = parseResidents(rows);
   assert.equal(list.length, 2);
   assert.equal(list[0].cid, "1234567890123");
   assert.equal(list[0].birthday, "1957-01-01");
   assert.equal(list[1].cid, null);
+  assert.equal(list[0].sex, "ชาย");
+  assert.equal(list[0].nationality, "ไทย");
+  assert.equal(list[0].deceased, false);
+  assert.equal(list[0].address, "12 หมู่ 3");
+  assert.equal(list[0].phone, "0123456789");
+  assert.equal(list[1].sex, "หญิง");
+  assert.equal(list[1].nationality, "กัมพูชา(แรงงาน)");
+  assert.equal(list[1].deceased, true);
   const idx = residentIndex(list);
   assert.equal(idx.find("1234567890123", "ชื่ออื่น")?.by, "cid");
   assert.equal(idx.find(null, "ทดสอบ สอง")?.r.lat, 14.701);
   assert.equal(idx.find(null, "ไม่มีใคร"), null);
+});
+
+test("ประชากร: ไม่ผูกลำดับคอลัมน์ รักษารหัสศูนย์นำหน้า และไม่เดาค่า death ที่ว่าง", () => {
+  const list = parseResidents([
+    ["longitude", "fname", "sex", "citizenship", "latitude", "death", "cid", "pname", "lname", "age_y"],
+    [103.2, "ทดสอบ", 2, 1, 14.7, "", "", "", "ระบบ", 35],
+    [103.2, "อีกราย", "9", "ZZ", 14.7, "N", "", "", "ระบบ", ""],
+  ]);
+  assert.equal(list[0].nationality, "อังกฤษ");
+  assert.equal(list[0].deceased, null);
+  assert.equal(residentAge(list[0]), 35);
+  assert.equal(list[1].sex, "ไม่ทราบรหัส (9)");
+  assert.equal(list[1].nationality, "ไม่ทราบรหัส (ZZ)");
+  assert.equal(residentAge(list[1]), null);
+  assert.throws(() => parseResidents([["cid", "name"]]), /ไม่มีคอลัมน์/);
+  assert.throws(() => parseResidents([]), /ไม่มีคอลัมน์/);
 });

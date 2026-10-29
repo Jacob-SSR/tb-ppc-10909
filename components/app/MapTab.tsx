@@ -23,7 +23,7 @@ const RING_HEX: Record<1 | 2 | 3, string> = { 1: "#c92a2a", 2: "#e8590c", 3: "#1
 const OUTSIDE_HEX = "#868e96";
 const outcomeHex = (o: string | null | undefined) =>
   !o || o === "กำลังรักษา" ? "#c92a2a" : ["หาย", "รักษาครบ"].includes(o) ? "#2b8a3e" : o === "เสียชีวิต" ? "#495057" : "#f08c00";
-const BY_LABEL: Record<MapPoint["by"], string> = { db: "พิกัดในทะเบียน", cid: "Sheet พิกัดบ้าน (เลขบัตร)", name: "Sheet พิกัดบ้าน (ชื่อ — ตรวจให้แน่ใจ)" };
+const BY_LABEL: Record<MapPoint["by"], string> = { db: "พิกัดในทะเบียน", cid: "ชีตประชากร (เลขบัตร)", name: "ชีตประชากร (ชื่อ — ตรวจให้แน่ใจ)" };
 const norm = (s: unknown) => String(s ?? "").toLowerCase();
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -35,6 +35,7 @@ function RingBadge({ ring }: { ring: 1 | 2 | 3 | null }) {
 export function MapTab() {
   const { data, fy, open, patientById, contactById, contactsOf } = useApp();
   const [pts, setPts] = useState<PointsRes | null>(null);
+  const [revision, setRevision] = useState(0);
   const [allYears, setAllYears] = useState(false);
   const [q, setQ] = useState("");
   const [sel, setSel] = useState<string | null>(null);
@@ -51,7 +52,10 @@ export function MapTab() {
   const [ready, setReady] = useState(false);
 
   const load = (fresh = false) =>
-    api<PointsRes>("GET", `/api/map${fresh ? "?fresh=1" : ""}`).then(setPts).catch((e) => toast(e.message, "bad"));
+    api<PointsRes>("GET", `/api/map${fresh ? "?fresh=1" : ""}`).then((res) => {
+      setPts(res);
+      setRevision((v) => v + 1);
+    }).catch((e) => toast(e.message, "bad"));
   useEffect(() => {
     load();
   }, []);
@@ -109,11 +113,11 @@ export function MapTab() {
     }
     if (!sel && shown.length) map.current.fitBounds(Lf.latLngBounds(shown.map((p) => [p.pt.lat, p.pt.lng])), { padding: [30, 30], maxZoom: 15 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, shown.map((p) => p.id).join(), sel]);
+  }, [ready, shown.map((p) => `${p.id}:${p.pt.lat}:${p.pt.lng}`).join(), sel]);
 
-  // คนรอบบ้าน (Sheet พิกัดบ้าน) — โหลดใหม่เมื่อเปลี่ยนผู้ป่วย / รัศมี / บันทึกผู้สัมผัสเพิ่ม
+  // คนรอบบ้าน (ชีตประชากร) — โหลดใหม่เมื่อเปลี่ยนผู้ป่วย / รัศมี / บันทึกผู้สัมผัสเพิ่ม
   const contactCount = sel ? contactsOf(sel).length : 0;
-  const nearKey = sel && showNear && pts?.pikad ? `${sel}|${radius}|${contactCount}` : null;
+  const nearKey = sel && showNear && pts?.pikad ? `${sel}|${radius}|${contactCount}|${revision}` : null;
   useEffect(() => {
     if (!nearKey) return;
     let dead = false;
@@ -176,11 +180,12 @@ export function MapTab() {
     open({
       type: "contact",
       contact: {
-        patient_id: p.id, name: n.name, cid: n.cid, age: n.age, ring, contact_type: contactTypeOfRing(ring),
+        patient_id: p.id, name: n.name, cid: n.cid, age: n.age,
+        sex: n.sex === "ชาย" || n.sex === "หญิง" ? n.sex : null, phone: n.phone, ring, contact_type: contactTypeOfRing(ring),
         unit_id: p.unit_id ?? undefined,
-        address: ring === 1 ? patientAddress(p) || null : null,
+        address: n.address || (ring === 1 ? patientAddress(p) || null : null),
         current_address: ring === 1 ? p.current_address ?? null : null,
-        notes: `จากแผนที่: ห่างบ้านผู้ป่วย ${formatDistance(n.distance)}`,
+        notes: `จากแผนที่: ห่างบ้านผู้ป่วย ${formatDistance(n.distance)}${n.nationality ? ` · สัญชาติ ${n.nationality}` : ""}${n.deceased === true ? " · ชีตประชากรระบุว่าเสียชีวิต" : ""}`,
       },
     });
   }
@@ -222,9 +227,9 @@ export function MapTab() {
             </div>
             <p className="text-sm text-muted">
               {allYears ? "ทุกปีงบ" : `ปีงบ ${fy}`}: มีพิกัด {located.withPt.length} ราย{located.without.length ? ` · ไม่มีพิกัด ${located.without.length}` : ""}
-              {pts && !pts.pikad && " · ยังไม่ได้เชื่อม Sheet พิกัดบ้าน (PIKAD_SPREADSHEET_ID)"}
-              {pts?.pikad && ` · Sheet พิกัดบ้าน ${pts.residents.toLocaleString()} หลัง`}
-              {pts?.pikad && <button className="ml-1 text-brand underline" onClick={() => load(true).then(() => toast("อ่าน Sheet พิกัดบ้านใหม่แล้ว"))}>อ่านใหม่</button>}
+              {pts && !pts.pikad && " · ยังไม่ได้เชื่อม ชีตประชากร (PIKAD_SPREADSHEET_ID)"}
+              {pts?.pikad && ` · ชีตประชากรที่มีพิกัด ${pts.residents.toLocaleString()} คน`}
+              {pts?.pikad && <button className="ml-1 text-brand underline" onClick={() => load(true).then(() => toast("อ่าน ชีตประชากรใหม่แล้ว"))}>อ่านใหม่</button>}
             </p>
             {pts?.error && <p className="rounded-xl bg-warn-bg p-2 text-sm text-warn">{pts.error}</p>}
             <ul className="flex max-h-[55vh] flex-col gap-1.5 overflow-y-auto lg:max-h-none">
@@ -314,7 +319,7 @@ function SelectedPanel(props: {
 
       {props.showNear && (
         <div className="flex min-h-0 flex-col gap-2">
-          {!props.pikad && <p className="rounded-xl bg-warn-bg p-2 text-sm text-warn">ยังไม่ได้เชื่อม Sheet พิกัดบ้าน — ตั้ง PIKAD_SPREADSHEET_ID ใน .env และแชร์ไฟล์ให้ service account</p>}
+          {!props.pikad && <p className="rounded-xl bg-warn-bg p-2 text-sm text-warn">ยังไม่ได้เชื่อม ชีตประชากร — ตั้ง PIKAD_SPREADSHEET_ID ใน .env และแชร์ไฟล์ให้ service account</p>}
           {props.loading && <p className="text-sm text-muted">กำลังหาคนรอบบ้าน…</p>}
           {props.nearErr && <p className="rounded-xl bg-bad-bg p-2 text-sm text-bad">{props.nearErr}</p>}
           {near?.error && <p className="rounded-xl bg-warn-bg p-2 text-sm text-warn">{near.error}</p>}
@@ -337,6 +342,9 @@ function SelectedPanel(props: {
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
                       {n.age != null && <span>อายุ {n.age} ปี</span>}
+                      {n.sex && <span>{n.sex}</span>}
+                      {n.nationality && <span>สัญชาติ {n.nationality}</span>}
+                      <span className={n.deceased === true ? "text-bad" : undefined}>{n.deceased === true ? "เสียชีวิต" : n.deceased === false ? "มีชีวิต" : "ไม่ระบุสถานะชีวิต"}</span>
                       {n.mapLink && <a className="text-brand underline" href={n.mapLink} target="_blank" rel="noreferrer">แผนที่</a>}
                       <span className="flex-1" />
                       {n.contactId ? (
