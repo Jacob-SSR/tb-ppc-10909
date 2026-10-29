@@ -187,7 +187,8 @@ export function MapTab() {
 
   return (
     <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <div className="relative">
+      {/* isolate: z-index ของ Leaflet (400–1000) อยู่แค่ในกล่องนี้ — ไม่ทับ modal (z-50) / แถบแท็บ */}
+      <div className="relative isolate z-0">
         <div ref={box} className="h-[60vh] min-h-80 w-full overflow-hidden rounded-2xl border border-line lg:h-[calc(100vh-11rem)]" />
         <div className="pointer-events-none absolute bottom-2 left-2 z-[400] rounded-lg bg-white/90 px-2 py-1 text-xs shadow">
           {selected ? (
