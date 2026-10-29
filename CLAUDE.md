@@ -52,10 +52,11 @@
 
 - `tb_units` หน่วยบริการ 7 แห่ง (`admin` = รพ.พลับพลาชัย, `unit` = รพ.สต.)
 - `tb_users` ผู้ใช้รายคน ผูกหน่วย
-- `tb_patients` ผู้ป่วย index — **คง id เดิมรูปแบบ `P` + 10 hex** เพื่อ import ตรง · มี `current_address` (migration 004, ต่อท้าย DB_Patients ใน Sheet)
+- `tb_patients` ผู้ป่วย index — **คง id เดิมรูปแบบ `P` + 10 hex** เพื่อ import ตรง · มี `current_address` (migration 004) และ `amphoe`/`province`/`postcode` (migration 005) — ต่อท้าย DB_Patients ใน Sheet
 - `tb_treatment_followups` ติดตามระหว่างรักษา หมวด 4 สูงสุด 12 ช่องต่อราย (§6.4)
 - `tb_contacts` ผู้สัมผัส — `contact_type` = `household` | `close`, มี `current_address`, `tb_treat_place`
 - `tb_visits` บันทึกรายครั้ง (FK ไป patient **หรือ** contact อย่างใดอย่างหนึ่ง), มี GPS + `client_uuid` กันส่งซ้ำ
+- `tb_appointments` นัดหมาย (migration 006) — `status` scheduled/done/missed/cancelled, `source` manual/visit/hosxp, `visit_id` (นัดจาก next_appt), `hosxp_oapp_id` (สำเนานัดจาก HOSxP oapp ไม่ซ้ำ)
 - `tb_targets` เป้าหมาย แยก `fy` + `quarter` (0 = ทั้งปี, 1–4) + `indicator`
 - `tb_audit_log`, `tb_settings`, `tb_sheet_outbox`
 - ตารางหลักมี `version` (optimistic lock: UPDATE … WHERE id=? AND version=?) และ `deleted_at` (soft delete)
@@ -69,7 +70,7 @@ DB pools ใน `lib/db.ts`:
 
 - service `mysql` ใน `docker-compose.yml` ของโปรเจกต์นี้: `image: mysql:8.4`, `TZ=Asia/Bangkok`, `--character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci`
 - ข้อมูลอยู่ใน named volume `tb_mysql` — **ห้าม** `docker compose down -v` บน production
-- **ไม่เปิด `ports:`** ออก LAN; แอปต่อผ่านชื่อ service `mysql:3306` ใน network ของ compose
+- **ไม่เปิด `ports:`** ออก LAN; แอปต่อผ่านชื่อ service `mysql:3306` ใน network ของ compose — เปิดเฉพาะ `127.0.0.1:3313` บนเครื่อง (`TB_MYSQL_PORT`) ให้ต่อจากเครื่อง server/SSH tunnel; phpMyAdmin port 9010 อยู่ใน profile `pma` เปิดเฉพาะตอนใช้ (Jed ขอ 26 ต.ค. 2569)
 - จำกัดหน่วยความจำ (`--innodb-buffer-pool-size=256M` + `mem_limit`) เพื่อไม่แย่ง RAM กับ ppc-hos บนเครื่องเดียวกัน
 - `docker-entrypoint-initdb.d/` ใช้**เฉพาะสร้างบัญชี** `tb_app` (สคริปต์ `.sh` อ่านรหัสจาก env) สิทธิ์ `SELECT, INSERT, UPDATE` บน `ppc_tb.*` + `DELETE` บน `tb_settings` — ห้ามใช้ `MYSQL_USER`/`MYSQL_PASSWORD` (ได้สิทธิ์ ALL)
 - Schema สร้างด้วย **migration** ตั้งแต่วันแรก: `db/migrations/001_init.sql` (= `ppc_tb_schema.sql` ตัดส่วน CREATE USER ท้ายไฟล์ออก; GRANT DELETE ของ `tb_app` อยู่ใน `002_app_grants.sql`), ไฟล์ถัดไปเรียงเลข, ตาราง `schema_migrations` จำว่ารันอะไรแล้ว, รันด้วย `npm run migrate` ด้วยบัญชี migrate แยก (มีสิทธิ์ DDL) — ไม่แก้ไฟล์ migration ที่รันไปแล้ว
@@ -95,7 +96,7 @@ DB pools ใน `lib/db.ts`:
 - **user `unit`**: เพิ่ม/แก้ผู้สัมผัสได้เฉพาะ `unit_id` ของหน่วยตัวเอง (ไม่ระบุ = หน่วยตัวเอง, ระบุเป็นหน่วยอื่นไม่ได้); บันทึก visit ได้เฉพาะผู้สัมผัสในเขต (ของผู้ป่วยไม่ได้); แก้ visit ได้เฉพาะที่หน่วยตัวเองบันทึก
 - ลบผู้ป่วยไม่ได้ถ้ายังมีผู้สัมผัส ("กรุณาลบผู้สัมผัสก่อน"); แปลงผู้สัมผัสซ้ำไม่ได้ ("ลงทะเบียนเป็นผู้ป่วยแล้ว")
 - บันทึกผู้ป่วย: `fy` คำนวณจากวันเริ่มยา (ไม่มีใช้วันวินิจฉัย); ต้องมีชื่อ และวันเริ่มยาหรือวันวินิจฉัย
-- visit: ต้องมีวันที่ + รายละเอียด, วันนัดต้องหลังวันที่บันทึก; นัดค้าง = `next_appt` ของบันทึกล่าสุด (`lib/tb/appointments.ts`), ไม่แสดงนัดของผู้ป่วยที่สรุปผลแล้ว
+- visit: ต้องมีวันที่ + รายละเอียด, วันนัดต้องหลังวันที่บันทึก; นัดค้าง = `tb_appointments.status = scheduled` (next_appt ของบันทึก → สร้างนัดให้, บันทึกใหม่ → นัดที่ถึงวันแล้ว = มาตามนัด — `lib/repo/appointments.ts`), ไม่แสดงนัดของผู้ป่วยที่สรุปผลแล้ว
 - ประวัติการแก้ไข: user `unit` เห็นประวัติของผู้สัมผัสเฉพาะรายการที่หน่วยตัวเองทำ (+ `migrate`), เก็บรายการช่องที่เปลี่ยน "เดิม → ใหม่"
 - นำเข้า Excel: แม็ปตามหัวคอลัมน์ไทย; จับคู่ผู้ป่วยด้วย id หรือ (ปีงบ + HN), ผู้สัมผัสด้วย id หรือ (ผู้ป่วย index + ชื่อ) โดยหาผู้ป่วย index จาก id หรือ (HN index + ปีงบ); **ช่องว่างในไฟล์ไม่ลบค่าเดิม**; รายงาน เพิ่ม/อัปเดต/ข้าม + เหตุผลรายแถว
 - แจ้งเตือน 07:00: กลุ่ม ขาดนัด / วันนี้ / พรุ่งนี้; LINE broadcast แสดงไม่เกิน 15 รายต่อกลุ่ม ข้อความ ≤ 4,900 ตัวอักษร; อีเมลถึง `reminder_emails` ใน `tb_settings`; ไม่มีนัดเลย = ไม่ส่ง
@@ -222,3 +223,5 @@ UI: ธีมเขียว/มิ้นต์, ฟอนต์ Prompt/Sarabun 
 13. **mysql CLI ใน container** ใช้ utf8mb4 (`db/conf/client-utf8mb4.cnf`) — ค่าเริ่มต้นของ image เป็น latin1 ทำให้ภาษาไทยที่พิมพ์ผ่าน `docker compose exec mysql mysql` เพี้ยน
 14. **HOSxP เติมอัตโนมัติ** (ฟอร์มผู้ป่วย + ผู้สัมผัส, เฉพาะทีม รพ.): กรอก HN แล้วออกจากช่อง หรือเลขบัตรครบ 13 หลัก → เติมเฉพาะช่องที่ว่าง (ชื่อ เลขบัตร เพศ อายุ สิทธิ์ เบอร์ ที่อยู่ ต./อ./จ.), ปุ่ม "ดึงจาก HOSxP" = ทับทุกช่อง, เตือนถ้า HOSxP ระบุว่าเสียชีวิต · query ใช้ `p.*` + เลือกคอลัมน์ที่มี (ต่างกันตามเวอร์ชัน HOSxP) และ LPAD รหัส ต./อ./จ. แบบ ppc-hos
 15. **ย้ายข้อมูลจากเว็บ**: แท็บ นำเข้า/ส่งออก → "ย้ายข้อมูลจากระบบเดิม" (อ่าน Sheet ตรง หรือ .xlsx) ทำเหมือน `scripts/import-from-sheet.ts` (ใช้ `lib/migrateSheet.ts` ร่วมกัน)
+16. **นัดหมาย CRUD** (ขอ 28 ต.ค. 2569): ตาราง `tb_appointments` · เพิ่ม/แก้/เลื่อน/มาตามนัด/ขาดนัด/ยกเลิก — unit ทำได้เฉพาะผู้สัมผัสในเขต, ลบ = admin · ดึงนัดจาก HOSxP `oapp` (SQL ตาม plubplachai-alert + `app_cause`/`note` จาก debug trace หน้าจอนัด HOSxP) **อ่านอย่างเดียว ไม่เขียนกลับ HOSxP** (§2) · **คลินิกนัด = household / close contact** (Jed 28 ต.ค. 2569): ดึงนัดคลินิกเหล่านี้จาก HOSxP เข้าเองทุกชั่วโมง จับคู่ผู้สัมผัสด้วย HN → เลขบัตร → ผู้ป่วยตาม HN (`HOSXP_APPT_CLINICS`), ฟอร์มนัดผู้สัมผัสตั้งคลินิกตามประเภทการสัมผัส · อัปเดตนัดที่ดึงมาทุก 06:00 (visit_vn = มาตามนัด, สถานะไม่ใช่ NULL/1 หรือถูกลบ = ยกเลิก, `HOSXP_ACTIVE_STATUS_IDS`) · ยังไม่ mirror นัดไป Google Sheet
+17. **แผนที่** (ขอ 29 ต.ค. 2569, แท็บ admin เท่านั้น — Sheet พิกัดบ้านมีเลขบัตรของคนทั้งอำเภอ): หมุดผู้ป่วยจาก lat/lng ในทะเบียน ไม่มี → จับคู่ Sheet พิกัดบ้าน (`PIKAD_SPREADSHEET_ID`, แบบ tb-map ใน ppc-hos: เลขบัตร → ชื่อตัดคำนำหน้า) · ติ้ก "ใครใกล้คนนี้บ้าง" → คนรอบบ้าน (รัศมี 50–500 ม.) + วงที่แนะนำ `lib/tb/geo.ts`: ≤ 10 ม. = วง 1 ร่วมบ้าน, ≤ 50 = วง 2, ≤ 200 = วง 3 (51–99 ม. นับวง 3) → "+ บันทึกเป็นผู้สัมผัส" เปิดฟอร์มเดิม (ผ่าน validation/audit ปกติ) · ไม่เขียนพิกัดกลับ Sheet pikad / ทะเบียนอัตโนมัติ

@@ -7,13 +7,14 @@ import { fyOf } from "@/lib/tb/dates";
 import { FOLLOWUP_TESTS, followupsForForm, nextFreeSlot, toFollowupInput, type FollowupInput } from "@/lib/tb/followups";
 import { OPTIONS } from "@/lib/tb/options";
 import { api, ApiError } from "./api";
+import { patientAddress } from "./bits";
 import { useHosxp } from "./hosxp";
 import { useApp } from "./store";
 import type { Patient } from "./types";
 
 type Form = Record<string, string>;
 const KEYS = [
-  "name", "hn", "tb_no", "cid", "sex", "age", "rights", "phone", "address", "area", "current_address", "unit_id", "lat", "lng", "comorbid", "hiv",
+  "name", "hn", "tb_no", "cid", "sex", "age", "rights", "phone", "address", "area", "amphoe", "province", "postcode", "current_address", "unit_id", "lat", "lng", "comorbid", "hiv",
   "patient_type", "reg_place", "diag_basis", "rr", "diag_date", "start_date", "regimen", "admit_date", "dc_date", "lft",
   "outcome", "outcome_date", "notes", "seq",
 ] as const;
@@ -37,9 +38,10 @@ export function PatientForm({ patient }: { patient: Partial<Patient> | null }) {
 
   // HOSxP: กรอก HN แล้วออกจากช่อง / เลขบัตรครบ 13 หลัก → เติมช่องว่างให้เอง, ปุ่ม = ดึงใหม่ทับทุกช่อง
   const hx = useHosxp(data.features.hosxp, f, setF, (r) => ({
-    hn: r.hn, name: r.name, cid: r.cid, sex: r.sex, age: r.age, rights: r.rights, phone: r.phone, address: r.address, area: r.area,
+    hn: r.hn, name: r.name, cid: r.cid, sex: r.sex, age: r.age, rights: r.rights, phone: r.phone,
+    address: r.address, area: r.area, amphoe: r.amphoe, province: r.province, postcode: r.postcode,
   }));
-  const regAddress = [f.address, f.area].filter((x) => x.trim()).join(" ");
+  const regAddress = patientAddress(f);
 
   function setFu(slot: number, patch: Partial<FollowupInput>) {
     setFus((list) => list.map((x) => (x.slot === slot ? { ...x, ...patch } : x)));
@@ -98,6 +100,9 @@ export function PatientForm({ patient }: { patient: Partial<Patient> | null }) {
           <Field label="โทรศัพท์"><Input type="tel" {...bind("phone")} /></Field>
           <Field label="บ้านเลขที่ / หมู่"><Input {...bind("address")} /></Field>
           <Field label="ตำบล / พื้นที่"><Input {...bind("area")} /></Field>
+          <Field label="อำเภอ"><Input {...bind("amphoe")} /></Field>
+          <Field label="จังหวัด"><Input {...bind("province")} /></Field>
+          <Field label="รหัสไปรษณีย์"><Input {...bind("postcode")} inputMode="numeric" maxLength={5} /></Field>
           <Field label="รพ.สต.รับผิดชอบ"><Select options={unitOpts} {...bind("unit_id")} /></Field>
           <Field label="โรคร่วม (U/D)"><Input {...bind("comorbid")} /></Field>
           <Field label="ผล HIV"><Select options={OPTIONS.hiv} {...bind("hiv")} /></Field>

@@ -11,6 +11,7 @@ import { api, ApiError } from "./api";
 import { Tel, TaskLine, th } from "./bits";
 import { useHosxp } from "./hosxp";
 import { useApp } from "./store";
+import { ApptSection } from "./Appointments";
 import { Timeline } from "./Timeline";
 import type { Contact } from "./types";
 
@@ -202,6 +203,7 @@ export function ContactForm({ contact }: { contact: Partial<Contact> }) {
         </Grid>
       </Section>
 
+      {!isNew && <ApptSection contactId={contact.id!} hn={contact.hn} canAdd={canEdit} back={{ type: "contact", contact }} />}
       {!isNew && <Timeline refId={contact.id!} label={contact.name ?? ""} canAdd={canEdit} />}
       {!canEdit && <Badge tone="muted">ดูได้อย่างเดียว — อยู่นอกเขตรับผิดชอบของหน่วยท่าน</Badge>}
     </Modal>

@@ -1,19 +1,15 @@
 import type { Metadata } from "next";
-import { Prompt, Sarabun } from "next/font/google";
-import "./globals.css";
-
 // ฟอนต์เดียวกับ ppc-hos: Prompt สำหรับหัวข้อ, Sarabun สำหรับเนื้อความ/ตาราง
-const prompt = Prompt({
-  variable: "--font-prompt",
-  subsets: ["thai", "latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const sarabun = Sarabun({
-  variable: "--font-sarabun",
-  subsets: ["thai", "latin"],
-  weight: ["400", "500", "600"],
-});
+// ใช้ไฟล์ฟอนต์จาก npm (@fontsource) แทน next/font/google — build ไม่ต้องต่อ Google Fonts
+// (เครือข่าย รพ. บล็อก/ช้า ทำให้ docker build ล้ม) และ browser ไม่ต้องออกเน็ตไปโหลดฟอนต์
+import "@fontsource/prompt/400.css";
+import "@fontsource/prompt/500.css";
+import "@fontsource/prompt/600.css";
+import "@fontsource/prompt/700.css";
+import "@fontsource/sarabun/400.css";
+import "@fontsource/sarabun/500.css";
+import "@fontsource/sarabun/600.css";
+import "./globals.css";
 
 export const metadata: Metadata = {
   title: "ทะเบียนวัณโรค รพ.พลับพลาชัย",
@@ -22,7 +18,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="th" className={`${prompt.variable} ${sarabun.variable} h-full antialiased`}>
+    <html lang="th" className="h-full antialiased">
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

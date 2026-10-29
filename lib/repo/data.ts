@@ -1,6 +1,6 @@
 // lib/repo/data.ts — ข้อมูลทั้งหมดที่หน้าเว็บใช้ (แทน getData เดิม) กรองตามสิทธิ์ที่ SQL เสมอ (§3)
 //   admin: ทุกอย่าง
-//   unit : ผู้สัมผัสของหน่วยตัวเอง + visit ของผู้สัมผัสเหล่านั้น
+//   unit : ผู้สัมผัสของหน่วยตัวเอง + visit / นัด ของผู้สัมผัสเหล่านั้น
 //          + ผู้ป่วย index ของผู้สัมผัสเหล่านั้น (เฉพาะช่องที่จำเป็น) — ไม่ได้ followup / visit ของผู้ป่วย
 import type { Queryable } from "../audit.ts";
 import { isTBSql, summarizeContacts, type ContactCountRow, type ContactSummary } from "../tb/contacts.ts";
@@ -16,6 +16,7 @@ export interface AppData {
   patients: Row[];
   contacts: Row[];
   visits: Row[];
+  appointments: Row[];
   followups: Row[];
   contactSummary: Record<string, ContactSummary>;
   settings: Record<string, string>;
@@ -56,6 +57,19 @@ export async function loadAppData(db: Queryable, actor: Actor): Promise<AppData>
         [unitId],
       );
 
+  // นัดหมาย: ที่ยังค้างทั้งหมด + ประวัติย้อนหลัง 1 ปี (ไม่ต้องส่งทั้งหมดทุกครั้ง)
+  const apptSelect = `SELECT a.id, a.patient_id, a.contact_id, a.appt_date, a.appt_time, a.purpose, a.place, a.doctor_name, a.note,
+            a.status, a.source, a.visit_id, a.hosxp_oapp_id, a.hosxp_status, a.version, a.updated_at,
+            u.display_name AS by_name, un.name AS by_unit_name
+       FROM tb_appointments a LEFT JOIN tb_users u ON u.id = COALESCE(a.updated_by, a.created_by) LEFT JOIN tb_units un ON un.id = u.unit_id
+      WHERE a.deleted_at IS NULL AND (a.status = 'scheduled' OR a.appt_date >= CURDATE() - INTERVAL 1 YEAR)`;
+  const [appointments] = admin
+    ? await db.query<Row[]>(`${apptSelect} ORDER BY a.appt_date, a.appt_time`)
+    : await db.query<Row[]>(
+        `${apptSelect} AND a.contact_id IN (SELECT id FROM tb_contacts WHERE unit_id = ? AND deleted_at IS NULL) ORDER BY a.appt_date, a.appt_time`,
+        [unitId],
+      );
+
   const [followups] = admin
     ? await db.query<Row[]>(
         `SELECT f.patient_id, f.slot, f.month_no, f.test, f.test_date, f.result, f.note
@@ -77,7 +91,7 @@ export async function loadAppData(db: Queryable, actor: Actor): Promise<AppData>
   const settings = Object.fromEntries(settingRows.map((r) => [r.k as string, r.v as string]));
   const [targets] = await db.query<Row[]>("SELECT fy, quarter, indicator, target, unit FROM tb_targets ORDER BY fy, quarter");
 
-  return { today: todayBangkok(), units, patients, contacts, visits, followups, contactSummary, settings, targets };
+  return { today: todayBangkok(), units, patients, contacts, visits, appointments, followups, contactSummary, settings, targets };
 }
 
 /** user unit ค้นผู้ป่วย index เพื่อเพิ่มผู้สัมผัส — คืนเฉพาะช่องที่จำเป็น, จำกัด 20 ราย */

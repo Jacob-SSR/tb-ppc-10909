@@ -6,8 +6,9 @@ import { addDays } from "@/lib/tb/dates";
 import { followupsForForm, toFollowupInput } from "@/lib/tb/followups";
 import { patientStart } from "@/lib/tb/tasks";
 import { api } from "./api";
-import { ContactCard, ContactSummaryLine, Info, isRR, OutcomeBadge, TaskLine, th } from "./bits";
+import { ContactCard, ContactSummaryLine, Info, isRR, OutcomeBadge, patientAddress, TaskLine, th } from "./bits";
 import { useApp } from "./store";
+import { ApptSection } from "./Appointments";
 import { Timeline } from "./Timeline";
 import { exportPatientWord } from "./wordExports";
 
@@ -63,7 +64,7 @@ export function PatientDetail({ id }: { id: string }) {
           <Info label="สูตรยา">{p.regimen}</Info>
           <Info label="วินิจฉัย">{p.diag_basis}</Info>
           <Info label="ผลดื้อ Rifampicin">{p.rr}</Info>
-          <Info label="ที่อยู่ตามทะเบียน">{[p.address, p.area].filter(Boolean).join(" ")}</Info>
+          <Info label="ที่อยู่ตามทะเบียน">{patientAddress(p)}</Info>
           {p.current_address && <Info label="ที่อยู่ปัจจุบัน">{p.current_address}</Info>}
           <Info label="รพ.สต.รับผิดชอบ">{unitName(p.unit_id)}</Info>
           <Info label="โรคร่วม">{p.comorbid}</Info>
@@ -123,11 +124,12 @@ export function PatientDetail({ id }: { id: string }) {
         <div className="mt-3">
           <Button variant="contact" size="sm" onClick={() => open({
             type: "contact",
-            contact: { patient_id: id, contact_type: "household", ring: 1, unit_id: isAdmin ? (p.unit_id ?? undefined) : data.user.unitId, address: [p.address, p.area].filter(Boolean).join(" ") || null, current_address: p.current_address ?? null },
+            contact: { patient_id: id, contact_type: "household", ring: 1, unit_id: isAdmin ? (p.unit_id ?? undefined) : data.user.unitId, address: patientAddress(p) || null, current_address: p.current_address ?? null },
           })}>+ เพิ่มผู้สัมผัส</Button>
         </div>
       </Section>
 
+      <ApptSection patientId={id} hn={p.hn} canAdd={isAdmin} back={{ type: "patient", id }} />
       {isAdmin && <Timeline refId={id} label={p.name} canAdd />}
 
       {(episodes.length > 0 || asContact.length > 0) && (

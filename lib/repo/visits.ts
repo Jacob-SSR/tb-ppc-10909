@@ -1,11 +1,13 @@
 // lib/repo/visits.ts — บันทึกการรักษา/ติดตามรายครั้ง
 // user unit: บันทึกได้เฉพาะผู้สัมผัสในเขต (ของผู้ป่วยไม่ได้), แก้ได้เฉพาะที่หน่วยตัวเองบันทึก, ลบ = admin
 // client_uuid: เครื่องที่เน็ตหลุดส่งร่างซ้ำ → คืนรายการเดิม ไม่สร้างซ้ำ
+// นัดหมาย: บันทึกใหม่ = มาตามนัด (นัดที่ถึงวันแล้ว), next_appt = นัดใหม่ใน tb_appointments (lib/repo/appointments.ts)
 import { diff, type Queryable, writeAudit } from "../audit.ts";
 import { badRequest, forbidden, notFound } from "../errors.ts";
 import { enqueue } from "../outbox.ts";
 import { newEntityId } from "../tb/ids.ts";
 import type { VisitInput } from "../validation.ts";
+import { dropVisitAppointment, markAttended, syncVisitAppointment } from "./appointments.ts";
 import type { Actor, Row } from "./common.ts";
 
 const VISIT_COLS = ["visit_date", "visit_type", "detail", "next_appt", "lat", "lng"] as const;
@@ -45,6 +47,9 @@ export async function createVisit(
     changes: diff(null, { ...input, ref: input.patient_id ?? input.contact_id }, [...VISIT_COLS, "ref"]), ip: actor.ip,
   });
   await enqueue(db, "visit", id);
+  const v = { id, patient_id: input.patient_id ?? null, contact_id: input.contact_id ?? null, visit_date: input.visit_date, visit_type: input.visit_type, next_appt: input.next_appt };
+  await markAttended(db, v, actor);
+  await syncVisitAppointment(db, v, actor);
   return { id, duplicate: false };
 }
 
@@ -73,6 +78,12 @@ export async function updateVisit(db: Queryable, id: string, input: VisitInput, 
     );
     await writeAudit(db, { userId: actor.id, action: "save", entity: "visit", entityId: id, patientId, changes, ip: actor.ip });
     await enqueue(db, "visit", id);
+    if ("next_appt" in changes) {
+      await syncVisitAppointment(db, {
+        id, patient_id: cur.patient_id as string | null, contact_id: cur.contact_id as string | null,
+        visit_date: next.visit_date, visit_type: next.visit_type, next_appt: next.next_appt,
+      }, actor);
+    }
   }
   return { id };
 }
@@ -88,4 +99,5 @@ export async function deleteVisit(db: Queryable, id: string, actor: Actor): Prom
     changes: { [`ลบบันทึก ${cur.visit_date} ${cur.visit_type}`]: [String(cur.detail ?? "").slice(0, 80), null] }, ip: actor.ip,
   });
   await enqueue(db, "visit", id);
+  await dropVisitAppointment(db, id, (cur.patient_id as string | null) ?? null, actor);
 }

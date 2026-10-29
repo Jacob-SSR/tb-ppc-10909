@@ -10,7 +10,7 @@ export interface ReminderItem {
   hn: string;
   unit: string;
   phone: string;
-  last: string; // "วันที่ ประเภท" ของบันทึกครั้งล่าสุด
+  last: string; // เรื่องที่นัด: "เวลา · เรื่อง · สถานที่"
 }
 
 export interface ReminderGroups {
@@ -59,7 +59,7 @@ export function emailHtml(g: ReminderGroups): string {
     l.length
       ? `<h3 style="color:${color}">${title} (${l.length})</h3>` +
         '<table border="1" cellpadding="5" style="border-collapse:collapse;font-family:sans-serif;font-size:14px">' +
-        '<tr style="background:#e6efec"><th>วันนัด</th><th>ชื่อ</th><th>ประเภท</th><th>HN</th><th>หน่วย</th><th>โทร</th><th>ครั้งล่าสุด</th></tr>' +
+        '<tr style="background:#e6efec"><th>วันนัด</th><th>ชื่อ</th><th>ประเภท</th><th>HN</th><th>หน่วย</th><th>โทร</th><th>เรื่องที่นัด</th></tr>' +
         l.map((a) => `<tr><td>${th(a.appt)}</td><td>${esc(a.name)}</td><td>${a.kind}</td><td>${esc(a.hn)}</td><td>${esc(a.unit)}</td><td>${esc(a.phone)}</td><td>${esc(a.last)}</td></tr>`).join("") +
         "</table>"
       : "";

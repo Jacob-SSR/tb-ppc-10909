@@ -40,31 +40,69 @@ Next.js (App Router) + MySQL 8.4 + Redis บน Docker Compose — แทน App
 | `tb_migrate` | ALL บน `ppc_tb.*` + GRANT OPTION | `docker compose run --rm migrate` |
 | `tb_app` | SELECT, INSERT, UPDATE บน `ppc_tb.*` + DELETE เฉพาะ `tb_settings`, `tb_targets` | แอป (ข้อมูลทะเบียนลบแบบ soft delete เท่านั้น) |
 
-## ติดตั้งบน 192.168.200.58
+## ติดตั้งบน server (192.168.200.58)
 
-ต้องมี Docker + Docker Compose และเครื่องที่ build ต้องต่อเน็ตได้ (npm, ฟอนต์ Google)
+### Port ที่ใช้ (ไม่ชนกับ ppc-hos — เปลี่ยนได้ในไฟล์ `.env`)
+
+| บริการ | Port บนเครื่อง | เปิดให้ใคร | ตั้งใน `.env` |
+|---|---|---|---|
+| เว็บแอป | **3010** | ทั้ง LAN | `TB_APP_PORT=3010` |
+| MySQL | **3313** | เฉพาะในเครื่อง server (127.0.0.1) — ต่อจากเครื่องอื่นผ่าน SSH tunnel หรือ phpMyAdmin | `TB_MYSQL_PORT=3313` |
+| phpMyAdmin | **9010** | ทั้ง LAN — **เปิดเฉพาะตอนใช้** | `PMA_PORT=9010` |
+| Redis | – | ไม่เปิด (ใช้ภายใน docker) | |
+
+ชื่อ container ขึ้นต้นด้วย `tb-ppc-` และ network `tb-ppc-net` จึงไม่ชนกับ stack ของ ppc-hos
+
+### ขั้นตอน (Linux)
 
 ```bash
-cd /opt && git clone https://github.com/Jacob-SSR/tb-ppc-10909.git tb-ppc && cd tb-ppc
+# 0) มี Docker แล้วหรือยัง — ต้องเห็นเลขเวอร์ชันทั้งสองบรรทัด
+docker --version && docker compose version
+#    ยังไม่มี: curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER  (แล้ว logout/login ใหม่)
 
-# 1) รหัสผ่าน (สุ่มใหม่ทั้งหมด — ไม่ใช่รหัส HOSxP)
+# 1) เอาโค้ดลงเครื่อง (repo เป็น private — ใช้ GitHub token เป็นรหัสผ่าน)
+cd /opt && sudo git clone -b claude/nifty-euler-jwytsx https://github.com/Jacob-SSR/tb-ppc-10909.git tb-ppc
+sudo chown -R $USER: /opt/tb-ppc && cd /opt/tb-ppc
+
+# 2) รหัสผ่าน (สุ่มใหม่ทั้งหมด — ไม่ใช่รหัส HOSxP) สร้างรหัสด้วย: openssl rand -hex 24
 cp .env.mysql.example .env.mysql          # MYSQL_ROOT_PASSWORD, TB_APP_PASSWORD, TB_MIGRATE_PASSWORD
-cp .env.example .env.production           # TB_DB_PASSWORD = TB_APP_PASSWORD, SESSION_SECRET, HOSXP_*, Google, LINE, SMTP
-openssl rand -hex 24                       # ใช้สร้างรหัสแต่ละตัว (hex ไม่มีอักขระพิเศษ)
+cp .env.example .env.production           # TB_DB_PASSWORD (= TB_APP_PASSWORD), SESSION_SECRET, HOSXP_*, GOOGLE_*, TB_SPREADSHEET_ID, LINE, SMTP
+nano .env.mysql && nano .env.production
 chmod 600 .env.mysql .env.production
 
-# 2) ที่เก็บ backup นอกเครื่อง (เช่น NAS ที่ mount ไว้) — ไม่ตั้ง = ./backups
-echo "BACKUP_DIR=/mnt/nas/tb-ppc-backup" > .env
+# 3) port + ที่เก็บ backup (NAS ที่ mount ไว้ — ไม่ตั้ง = ./backups)
+cat > .env <<'ENV'
+TB_APP_PORT=3010
+TB_MYSQL_PORT=3313
+PMA_PORT=9010
+BACKUP_DIR=/mnt/nas/tb-ppc-backup
+ENV
 
-# 3) ขึ้นระบบ
-docker compose up -d mysql redis
-docker compose run --rm migrate                                          # สร้างตาราง
-docker compose run --rm cli node scripts/create-admin.ts jed "ชื่อ-สกุล"   # admin คนแรก (ได้รหัสชั่วคราว)
-docker compose up -d --build                                             # app (:3010) + backup
-curl http://127.0.0.1:3010/api/health                                    # {"ok":true,"db":true,"redis":true}
+# 4) ขึ้นระบบ
+docker compose up -d mysql redis                                          # รอ ~30 วินาทีให้ mysql พร้อม
+docker compose logs mysql | grep "\[init\]"                               # ต้องเห็นบรรทัดสร้างบัญชี tb_app / tb_migrate
+docker compose run --rm migrate                                           # สร้างตาราง
+docker compose run --rm cli node scripts/create-admin.ts admin "ผู้ดูแลระบบ" # admin คนแรก (ได้รหัสชั่วคราว)
+docker compose up -d --build                                              # app + backup
+curl http://127.0.0.1:3010/api/health                                     # ต้องได้ {"ok":true,"db":true,"redis":true}
 ```
 
-เปิด `http://192.168.200.58:3010` → login → เปลี่ยนรหัส → สร้างผู้ใช้คนอื่นที่แท็บ "ผู้ใช้"
+เปิด `http://192.168.200.58:3010` → login → เปลี่ยนรหัส → ย้ายข้อมูลเดิมที่แท็บ "นำเข้า / ส่งออก" → สร้างผู้ใช้คนอื่นที่แท็บ "ผู้ใช้"
+
+ถ้าเครื่อง server เปิด firewall (ufw) อยู่: `sudo ufw allow 3010/tcp` (และ `9010/tcp` ถ้าใช้ phpMyAdmin)
+
+### phpMyAdmin (port 9010)
+
+```bash
+docker compose --profile pma up -d phpmyadmin     # เปิด → http://192.168.200.58:9010
+docker compose stop phpmyadmin                    # ปิดเมื่อใช้เสร็จ
+```
+
+- Login ด้วย `tb_app` + `TB_APP_PASSWORD` สำหรับดู/แก้ข้อมูล (ลบแถวและแก้โครงสร้างตารางไม่ได้ — กันพลาด) · ใช้ `root` เฉพาะงานดูแลระบบ
+- **อย่าแก้ข้อมูลผ่าน phpMyAdmin เป็นประจำ** — ไม่มีประวัติการแก้ไข (audit log) และไม่ส่งต่อไป Google Sheet; ถ้าแก้ไปแล้ว กด "เขียน Sheet ใหม่ทั้งหมดตอนนี้" ที่แท็บ "ตั้งเป้าหมาย"
+- เปิดทิ้งไว้ = ใครใน LAN ก็เห็นหน้า login ของฐานข้อมูลผู้ป่วย จึงตั้งให้เปิดเฉพาะตอนใช้
+
+### หมายเหตุ
 
 - ข้อมูลอยู่ใน volume `tb_mysql` — **ห้าม `docker compose down -v`** หลังมีข้อมูลจริง
 - รหัสใน `.env.mysql` มีผลตอนสร้าง volume ครั้งแรกเท่านั้น จะเปลี่ยนภายหลังต้อง `ALTER USER` ใน MySQL ด้วย
@@ -110,6 +148,20 @@ MSYS_NO_PATHCONV=1 docker compose run --rm -v "$(pwd -W)/Tuberculosis.xlsx:/impo
 `HOSXP_DB_HOST/PORT/NAME/USER/PASSWORD` — **บัญชีที่มีแค่ SELECT** · pool 3 connection · cache 1 ชม. · ทีม รพ. เท่านั้น
 HOSxP ปิดอยู่ก็ยังคีย์ทะเบียนได้ (กรอกเอง)
 
+นัดหมาย: **นัดคลินิก household / close contact ใน HOSxP ระบบดึงเข้าเองทุกชั่วโมง** (จับคู่ผู้สัมผัสด้วย HN หรือเลขบัตร, ไม่พบ = ผู้ป่วยตาม HN; ชื่อคลินิกตั้งได้ที่ `HOSXP_APPT_CLINICS`) · นัดคลินิกอื่น: หน้าผู้ป่วย/ผู้สัมผัส → "ดึงนัดจาก HOSxP" อ่านตาราง `oapp` (+ clinic / doctor / kskdepartment) ของ HN นั้น แล้วเลือกนัดที่จะเก็บสำเนาในระบบ
+(ไม่เขียนกลับ HOSxP) · ทุกเช้า 06:00 ระบบอัปเดตนัดที่ดึงมาแล้ว: มี `visit_vn` = มาตามนัด, สถานะไม่ใช่ NULL/1 (`HOSXP_ACTIVE_STATUS_IDS`) หรือถูกลบ = ยกเลิก, วันเลื่อน = เลื่อนตาม
+
+### แผนที่ (แท็บ "แผนที่" — ทีม รพ.)
+
+หมุดผู้ป่วยตามพิกัดในทะเบียน (Latitude/Longitude ในฟอร์มผู้ป่วย) — ไม่มีพิกัด → จับคู่จากชีตประชากรใหม่ด้วยเลขบัตรก่อน แล้วค่อยชื่อ
+ตั้ง `PIKAD_SPREADSHEET_ID=1UGeIm1DIAUxpb6pd9DN9uAy79qwGrsAHJUWer3w8ihg` ใน `.env.production` (แทน ID พิกัดบ้านเดิม) แล้ว `docker compose up -d --build` — แชร์ชีตใหม่ให้ service account สิทธิ์อ่านก่อน
+อ่านแท็บแรก A:R ตามหัวคอลัมน์ `pname/fname/lname`, `cid`, `latitude/longitude`, `birthdate`, `age_y`, `sex`, `citizenship`, `death`, `address`, `home_phone`
+แปลงเพศจาก `sex.csv` และสัญชาติจาก `nationality.csv` ที่นำมารวมไว้ใน `lib/residentCodes.json` โดยเทียบ `citizenship` กับ `nationality` (ไม่ใช้ `nhso_code`)
+แสดง `death=Y` ว่าเสียชีวิต, `N` ว่ามีชีวิต, ค่าอื่น/ว่างว่าไม่ระบุสถานะชีวิต; ไม่กรองผู้เสียชีวิตออกอัตโนมัติ
+เลือกผู้ป่วย → วง 1 ร่วมบ้าน (≤ 10 ม.) · วง 2 (≤ 50 ม.) · วง 3 (≤ 200 ม.) · ติ้ก **"ใครใกล้คนนี้บ้าง"** → รายชื่อคนรอบบ้านจาก Sheet พิกัดบ้าน
+เรียงใกล้ → ไกล พร้อมวงที่แนะนำ เพศ สัญชาติ สถานะชีวิต, บอกว่าเป็นผู้สัมผัส/ผู้ป่วยในทะเบียนแล้วหรือยัง, ปุ่ม **"+ บันทึกเป็นผู้สัมผัส"** เปิดฟอร์มกรอก ชื่อ เลขบัตร อายุ เพศ ที่อยู่ เบอร์โทร วง ประเภทให้ (สัญชาติ/สถานะเสียชีวิตอยู่ในบันทึก)
+(Sheet มีเลขบัตร → อ่านฝั่ง server, cache Redis 30 นาที, ปุ่ม "อ่านใหม่" อ่านทันที) — แชร์ไฟล์ให้ service account (ผู้มีสิทธิ์อ่าน) ก่อน
+
 ## Backup และ restore (ทดสอบแล้ว)
 
 service `backup` รัน `mysqldump --single-transaction` ทุกคืน 01:00 → `ppc_tb-YYYYMMDD-HHMM.sql.gz` + `.sha256` ใน `BACKUP_DIR` เก็บ 30 วัน
@@ -140,14 +192,14 @@ docker compose up -d                     # แล้วกด "เขียน S
 
 ## พัฒนาบนเครื่อง
 
-ใช้ mysql/redis ตัวเดียวกับ compose แต่เปิด port 3307/6380 ด้วย `docker-compose.dev.yml` (กันชนกับ MySQL ที่ติดตั้งบนเครื่อง เช่น XAMPP ที่ใช้ 3306)
+ใช้ mysql/redis ตัวเดียวกับ compose — mysql เปิด 127.0.0.1:3313 อยู่แล้ว, redis เปิด 6380 ด้วย `docker-compose.dev.yml` (กันชนกับ MySQL ที่ติดตั้งบนเครื่อง เช่น XAMPP ที่ใช้ 3306)
 
 ```bash
 npm install
 cp .env.mysql.example .env.mysql   # ใส่รหัส 3 ตัว (ก่อนเปิด mysql ครั้งแรก)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql redis
 cp .env.example .env.local
-#   TB_DB_HOST=127.0.0.1  TB_DB_PORT=3307  TB_DB_PASSWORD=(= TB_APP_PASSWORD)
+#   TB_DB_HOST=127.0.0.1  TB_DB_PORT=3313  TB_DB_PASSWORD=(= TB_APP_PASSWORD)
 #   TB_MIGRATE_PASSWORD=(= ใน .env.mysql)  REDIS_URL=redis://127.0.0.1:6380
 #   SESSION_SECRET=(สุ่ม 32+ ตัว)  WORKER=0
 npm run migrate

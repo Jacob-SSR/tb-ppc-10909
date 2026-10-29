@@ -1,0 +1,87 @@
+// แผนที่: ระยะทาง / พิกัด / ชื่อ / วงผู้สัมผัส + อ่าน Sheet พิกัดบ้าน (ข้อมูลสังเคราะห์)
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { parseResidents, residentAge, residentIndex } from "../../lib/pikad.ts";
+import { contactTypeOfRing, distanceMeters, formatDistance, nameKey, nearby, parseLatLng, pointOf, ringOf } from "../../lib/tb/geo.ts";
+
+const home = { lat: 14.7, lng: 103.2 };
+const north = (m: number) => ({ lat: home.lat + m / 111195, lng: home.lng }); // 1° lat ≈ 111.195 กม.
+
+test("distanceMeters (Haversine) ตรงกับระยะจริง", () => {
+  assert.equal(Math.round(distanceMeters(home, north(50))), 50);
+  assert.equal(Math.round(distanceMeters(home, north(1000))), 1000);
+  assert.equal(distanceMeters(home, home), 0);
+});
+
+test("ringOf: ≤10 ม. ร่วมบ้าน, ≤50 วง 2, ≤200 วง 3, เกิน = นอกวง", () => {
+  assert.deepEqual([0, 10, 11, 50, 51, 200, 201].map(ringOf), [1, 1, 2, 2, 3, 3, null]);
+  assert.equal(contactTypeOfRing(1), "household");
+  assert.equal(contactTypeOfRing(3), "close");
+  assert.equal(formatDistance(35.4), "35 ม.");
+  assert.equal(formatDistance(1250), "1.3 กม.");
+});
+
+test("parseLatLng / pointOf: รับ , และ / ตัดพิกัดนอกประเทศไทย", () => {
+  assert.deepEqual(parseLatLng("14.7, 103.2"), { lat: 14.7, lng: 103.2 });
+  assert.deepEqual(parseLatLng("14.7/103.2"), { lat: 14.7, lng: 103.2 });
+  assert.equal(parseLatLng("103.2, 14.7"), null);
+  assert.equal(parseLatLng(""), null);
+  assert.deepEqual(pointOf("14.7", 103.2), { lat: 14.7, lng: 103.2 });
+  assert.equal(pointOf(null, 103.2), null);
+  assert.equal(pointOf(0, 0), null);
+});
+
+test("nameKey ตัดคำนำหน้าและช่องว่าง", () => {
+  assert.equal(nameKey("นางสาว ทดสอบ  ระบบ"), "ทดสอบระบบ");
+  assert.equal(nameKey("ด.ช.ทดสอบ ระบบ"), "ทดสอบระบบ");
+  assert.equal(nameKey("นาย ทดสอบ ระบบ"), nameKey("ทดสอบ ระบบ"));
+});
+
+test("nearby เรียงใกล้ → ไกล + ใส่วง", () => {
+  const list = [{ id: "a", ...north(150) }, { id: "b", ...north(5) }, { id: "c", ...north(400) }, { id: "d", ...north(40) }];
+  const r = nearby(home, list, 200);
+  assert.deepEqual(r.map((x) => [x.id, x.ring]), [["b", 1], ["d", 2], ["a", 3]]);
+});
+
+test("parseResidents + residentIndex: จับคู่เลขบัตรก่อน แล้วค่อยชื่อ", () => {
+  const rows = [
+    ["cid", "pname", "fname", "lname", "latitude", "longitude", "birthdate", "sex", "citizenship", "death", "address", "home_phone", "age_y"],
+    ["1-2345-67890-12-3", "นาย", "ทดสอบ", "หนึ่ง", "14.7", "103.2", "01/01/2500", "1", "99", "N", "12 หมู่ 3", "0123456789", "69"],
+    ["", "", "พิกัดผิด", "", "999", "1", "", "", "", ""],
+    ["", "นางสาว", "ทดสอบ", "สอง", "14.701", "103.2", "2000-05-01", "2", "9A", "Y"],
+    ["", "", "ไม่มีพิกัด", ""],
+  ];
+  const list = parseResidents(rows);
+  assert.equal(list.length, 2);
+  assert.equal(list[0].cid, "1234567890123");
+  assert.equal(list[0].birthday, "1957-01-01");
+  assert.equal(list[1].cid, null);
+  assert.equal(list[0].sex, "ชาย");
+  assert.equal(list[0].nationality, "ไทย");
+  assert.equal(list[0].deceased, false);
+  assert.equal(list[0].address, "12 หมู่ 3");
+  assert.equal(list[0].phone, "0123456789");
+  assert.equal(list[1].sex, "หญิง");
+  assert.equal(list[1].nationality, "กัมพูชา(แรงงาน)");
+  assert.equal(list[1].deceased, true);
+  const idx = residentIndex(list);
+  assert.equal(idx.find("1234567890123", "ชื่ออื่น")?.by, "cid");
+  assert.equal(idx.find(null, "ทดสอบ สอง")?.r.lat, 14.701);
+  assert.equal(idx.find(null, "ไม่มีใคร"), null);
+});
+
+test("ประชากร: ไม่ผูกลำดับคอลัมน์ รักษารหัสศูนย์นำหน้า และไม่เดาค่า death ที่ว่าง", () => {
+  const list = parseResidents([
+    ["longitude", "fname", "sex", "citizenship", "latitude", "death", "cid", "pname", "lname", "age_y"],
+    [103.2, "ทดสอบ", 2, 1, 14.7, "", "", "", "ระบบ", 35],
+    [103.2, "อีกราย", "9", "ZZ", 14.7, "N", "", "", "ระบบ", ""],
+  ]);
+  assert.equal(list[0].nationality, "อังกฤษ");
+  assert.equal(list[0].deceased, null);
+  assert.equal(residentAge(list[0]), 35);
+  assert.equal(list[1].sex, "ไม่ทราบรหัส (9)");
+  assert.equal(list[1].nationality, "ไม่ทราบรหัส (ZZ)");
+  assert.equal(residentAge(list[1]), null);
+  assert.throws(() => parseResidents([["cid", "name"]]), /ไม่มีคอลัมน์/);
+  assert.throws(() => parseResidents([]), /ไม่มีคอลัมน์/);
+});

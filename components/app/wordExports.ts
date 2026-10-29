@@ -5,9 +5,9 @@ import { isTB } from "@/lib/tb/contacts";
 import { addDays, diffDays, formatThaiDate } from "@/lib/tb/dates";
 import { followupsForForm, toFollowupInput } from "@/lib/tb/followups";
 import { isConcluded, patientStart, screened } from "@/lib/tb/tasks";
-import { contactStatus, isRR, th } from "./bits";
+import { contactStatus, isRR, patientAddress, th } from "./bits";
 import type { DueItem, useApp } from "./store";
-import type { Contact, Patient, Visit } from "./types";
+import type { Contact, Patient } from "./types";
 import { downloadWord, type Block } from "./word";
 
 type Store = ReturnType<typeof useApp>;
@@ -40,7 +40,7 @@ export function exportPatientWord(s: Store, p: Patient) {
     { t: "kv", rows: [
       ["ชื่อ-สกุล", p.name], ["HN", p.hn], ["TB number", p.tb_no], ["เลขบัตรประชาชน", p.cid],
       ["เพศ / อายุ", [p.sex, p.age ? `${p.age} ปี` : ""].filter(Boolean).join(" / ")], ["สิทธิการรักษา", p.rights],
-      ["ที่อยู่ตามทะเบียน", [p.address, p.area].filter(Boolean).join(" ")], ["ที่อยู่ปัจจุบัน", p.current_address], ["รพ.สต.รับผิดชอบ", s.unitName(p.unit_id)], ["โทรศัพท์", p.phone],
+      ["ที่อยู่ตามทะเบียน", patientAddress(p)], ["ที่อยู่ปัจจุบัน", p.current_address], ["รพ.สต.รับผิดชอบ", s.unitName(p.unit_id)], ["โทรศัพท์", p.phone],
       ["โรคร่วม", p.comorbid], ["ผล HIV", p.hiv],
     ] },
     { t: "h2", text: "การวินิจฉัยและการรักษา" },
@@ -90,7 +90,7 @@ export function exportDueWord(s: Store, items: DueItem[], unitLabel: string) {
     return [
       th(x.due) + (x.due! < t ? ` (เกิน ${diffDays(x.due!, t)} วัน)` : ""), `${x.step} ${x.what}`, x.rec.name,
       c ? `${c.relation ?? ""} ของ ${idx?.name ?? ""}` : `ผู้ป่วย HN ${(x.rec as Patient).hn ?? ""}`,
-      c ? s.unitName(c.unit_id) : (x.rec as Patient).area, x.rec.phone, c ? (c.current_address || c.address) : ((x.rec as Patient).current_address || [(x.rec as Patient).address, (x.rec as Patient).area].filter(Boolean).join(" ")), "",
+      c ? s.unitName(c.unit_id) : (x.rec as Patient).area, x.rec.phone, c ? (c.current_address || c.address) : ((x.rec as Patient).current_address || patientAddress(x.rec as Patient)), "",
     ];
   };
   const blocks: Block[] = [
@@ -104,7 +104,7 @@ export function exportDueWord(s: Store, items: DueItem[], unitLabel: string) {
   return save(s, `รายการติดตาม_${unitLabel || "ทุกหน่วย"}_${t}`, "รายการติดตาม", blocks, true);
 }
 
-export interface ApptEntry { appt: string; kind: "P" | "C"; rec: Patient | Contact; last: Pick<Visit, "visit_date" | "visit_type"> }
+export interface ApptEntry { appt: string; kind: "P" | "C"; rec: Patient | Contact; summary: string }
 
 export function exportApptWord(s: Store, groups: [string, ApptEntry[]][], unitLabel: string) {
   const row = (a: ApptEntry) => {
@@ -112,7 +112,7 @@ export function exportApptWord(s: Store, groups: [string, ApptEntry[]][], unitLa
     const idx = c ? s.patientById(c.patient_id) : null;
     return [
       th(a.appt), a.rec.name, c ? "ผู้สัมผัส" : "ผู้ป่วย", c ? `${c.relation ?? ""} ของ ${idx?.name ?? ""}` : `HN ${(a.rec as Patient).hn ?? ""}`,
-      s.unitName(a.rec.unit_id) || (a.rec as Patient).area, a.rec.phone, `${th(a.last.visit_date)} ${a.last.visit_type}`, "",
+      s.unitName(a.rec.unit_id) || (a.rec as Patient).area, a.rec.phone, a.summary, "",
     ];
   };
   const blocks: Block[] = [
@@ -120,7 +120,7 @@ export function exportApptWord(s: Store, groups: [string, ApptEntry[]][], unitLa
     { t: "sub", text: `${unitLabel ? `${unitLabel} · ` : ""}ข้อมูล ณ ${d(s.data.today)}` },
     ...groups.flatMap(([title, list]) => list.length ? [
       { t: "h2", text: `${title} (${list.length})` } as Block,
-      { t: "table", head: ["วันนัด", "ชื่อ-สกุล", "ประเภท", "HN / ความเกี่ยวข้อง", "หน่วย/พื้นที่", "โทรศัพท์", "ครั้งล่าสุด", "มา / ลงชื่อ"], rows: list.map(row), widths: [10, 16, 9, 17, 12, 10, 16, 10] } as Block,
+      { t: "table", head: ["วันนัด", "ชื่อ-สกุล", "ประเภท", "HN / ความเกี่ยวข้อง", "หน่วย/พื้นที่", "โทรศัพท์", "เรื่องที่นัด", "มา / ลงชื่อ"], rows: list.map(row), widths: [10, 16, 9, 17, 12, 10, 16, 10] } as Block,
     ] : []),
   ];
   return save(s, `รายการนัด_${unitLabel || "ทุกหน่วย"}_${s.data.today}`, "รายการนัดหมาย", blocks, true);

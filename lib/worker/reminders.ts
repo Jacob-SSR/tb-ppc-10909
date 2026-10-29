@@ -2,14 +2,16 @@
 import type { Queryable } from "../audit.ts";
 import { emailConfigured, lineConfigured, sendEmail, sendLine } from "../notify.ts";
 import type { Row } from "../repo/common.ts";
-import { latestAppointments } from "../tb/appointments.ts";
-import { formatThaiDate, type IsoDate } from "../tb/dates.ts";
+import { apptSummary, pendingAppointments, type ApptRow } from "../tb/appointments.ts";
+import type { IsoDate } from "../tb/dates.ts";
 import { emailHtml, emailSubject, hasReminders, lineText, reminderGroups, type ReminderItem } from "../tb/reminder.ts";
 import { isConcluded } from "../tb/tasks.ts";
 
 export async function buildReminderItems(db: Queryable): Promise<ReminderItem[]> {
-  const [visits] = await db.query<Row[]>(
-    "SELECT id, patient_id, contact_id, visit_date, visit_type, detail, next_appt, updated_at FROM tb_visits WHERE deleted_at IS NULL",
+  // นัดค้าง (scheduled) ถึงพรุ่งนี้ — ขาดนัด / วันนี้ / พรุ่งนี้ — ไม่รวมผู้ป่วยที่สรุปผลแล้ว
+  const [appts] = await db.query<Row[]>(
+    `SELECT id, patient_id, contact_id, appt_date, appt_time, purpose, place, status
+       FROM tb_appointments WHERE deleted_at IS NULL AND status = 'scheduled' AND appt_date <= CURDATE() + INTERVAL 1 DAY`,
   );
   const [patients] = await db.query<Row[]>("SELECT id, name, hn, phone, outcome, unit_id FROM tb_patients WHERE deleted_at IS NULL");
   const [contacts] = await db.query<Row[]>("SELECT id, name, hn, phone, unit_id FROM tb_contacts WHERE deleted_at IS NULL");
@@ -18,8 +20,8 @@ export async function buildReminderItems(db: Queryable): Promise<ReminderItem[]>
   const C = new Map(contacts.map((c) => [c.id as string, c]));
   const U = new Map(units.map((u) => [Number(u.id), String(u.name)]));
 
-  const appts = latestAppointments(visits as never, (pid) => !isConcluded(P.get(pid)?.outcome as string | undefined));
-  return appts.flatMap((a) => {
+  const list = pendingAppointments(appts as unknown as ApptRow[], (pid) => !isConcluded(P.get(pid)?.outcome as string | undefined));
+  return list.flatMap((a) => {
     const rec = a.kind === "P" ? P.get(a.refId) : C.get(a.refId);
     if (!rec) return [];
     return [{
@@ -29,7 +31,7 @@ export async function buildReminderItems(db: Queryable): Promise<ReminderItem[]>
       hn: String(rec.hn ?? ""),
       unit: U.get(Number(rec.unit_id)) ?? "",
       phone: String(rec.phone ?? ""),
-      last: `${formatThaiDate(a.last.visit_date)} ${a.last.visit_type}`,
+      last: apptSummary(a.row),
     } satisfies ReminderItem];
   });
 }

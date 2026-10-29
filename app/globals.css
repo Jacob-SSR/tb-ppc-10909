@@ -37,8 +37,8 @@
   --color-warn-bg: var(--warn-bg);
   --color-bad: var(--bad);
   --color-bad-bg: var(--bad-bg);
-  --font-sans: var(--font-sarabun), "Leelawadee UI", Tahoma, sans-serif;
-  --font-heading: var(--font-prompt), "Leelawadee UI", Tahoma, sans-serif;
+  --font-sans: "Sarabun", "Leelawadee UI", Tahoma, sans-serif;
+  --font-heading: "Prompt", "Leelawadee UI", Tahoma, sans-serif;
 }
 
 body {
