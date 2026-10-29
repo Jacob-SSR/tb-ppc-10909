@@ -18,6 +18,7 @@ let unit: Actor;
 let otherUnit: Actor;
 let patientId: string;
 let contactId: string;
+const patientHn = `AP${Date.now().toString(36).slice(-8)}`; // ไม่ซ้ำกับรอบก่อน (จับคู่ผู้ป่วยตาม HN)
 
 type R = mysql.RowDataPacket & Record<string, unknown>;
 const appt = async (id: string) => (await tbDb.query<R[]>("SELECT * FROM tb_appointments WHERE id = ?", [id]))[0][0];
@@ -38,7 +39,7 @@ before(async () => {
   unit = await user(u1, "unit");
   otherUnit = await user(u2, "unit");
   patientId = newEntityId("P");
-  await tbDb.query("INSERT INTO tb_patients SET ?", [{ id: patientId, fy: 2570, name: "ผู้ป่วยนัด ทดสอบ", hn: "APPT1", start_date: "2026-10-01" }]);
+  await tbDb.query("INSERT INTO tb_patients SET ?", [{ id: patientId, fy: 2570, name: "ผู้ป่วยนัด ทดสอบ", hn: patientHn, start_date: "2026-10-01" }]);
   contactId = newEntityId("C");
   await tbDb.query("INSERT INTO tb_contacts SET ?", [{ id: contactId, patient_id: patientId, name: "ผู้สัมผัสนัด", contact_type: "household", unit_id: u1 }]);
 });
@@ -142,7 +143,7 @@ test("ดึงนัดคลินิก household / close contact อัต�
   const fake = async () => [
     { ...base, oapp_id: o(1), date: "2026-12-01", hn: `H${tag}`, cid: "" },
     { ...base, oapp_id: o(2), date: "2026-12-02", hn: `X${tag}`, cid, clinic: "Close contact" },
-    { ...base, oapp_id: o(3), date: "2026-12-03", hn: "APPT1", cid: "" },              // ผู้ป่วยตาม HN
+    { ...base, oapp_id: o(3), date: "2026-12-03", hn: patientHn, cid: "" },              // ผู้ป่วยตาม HN
     { ...base, oapp_id: o(4), date: "2026-12-04", hn: `NONE${tag}`, cid: "" },         // ไม่อยู่ในทะเบียน
     { ...base, oapp_id: o(5), date: "2026-12-05", hn: `H${tag}`, cid: "", active: false, status: "3" }, // ยกเลิกแล้ว
   ];

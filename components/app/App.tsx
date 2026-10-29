@@ -8,6 +8,7 @@ import { ContactForm } from "./ContactForm";
 import { AppointmentForm, HosxpApptPicker, PickApptRef } from "./Appointments";
 import { DashboardTab } from "./Dashboard";
 import { History } from "./History";
+import { MapTab } from "./MapTab";
 import { ContactsTab, PatientsTab, PickIndex } from "./Lists";
 import { PatientDetail } from "./PatientDetail";
 import { PatientForm } from "./PatientForm";
@@ -15,10 +16,11 @@ import { AppointmentsTab, DueTab } from "./Schedule";
 import { AppProvider, useApp } from "./store";
 import type { AppData } from "./types";
 
-type Tab = "dash" | "pat" | "con" | "appt" | "due" | "io" | "settings" | "users";
+type Tab = "dash" | "pat" | "map" | "con" | "appt" | "due" | "io" | "settings" | "users";
 const TABS: { id: Tab; label: string; admin?: boolean }[] = [
   { id: "dash", label: "แดชบอร์ด", admin: true },
   { id: "pat", label: "ผู้ป่วย", admin: true },
+  { id: "map", label: "แผนที่", admin: true },
   { id: "con", label: "ผู้สัมผัส" },
   { id: "appt", label: "นัดหมาย" },
   { id: "due", label: "ต้องติดตาม" },
@@ -76,6 +78,7 @@ function Shell() {
       <main className="mx-auto w-full max-w-6xl flex-1 px-3 py-4 sm:px-4">
         {tab === "dash" && <DashboardTab />}
         {tab === "pat" && <PatientsTab />}
+        {tab === "map" && <MapTab />}
         {tab === "con" && <ContactsTab />}
         {tab === "appt" && <AppointmentsTab />}
         {tab === "due" && <DueTab />}

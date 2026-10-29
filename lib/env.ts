@@ -17,6 +17,8 @@ const OPTIONAL_ENV = [
   "GOOGLE_SERVICE_ACCOUNT_EMAIL",
   "GOOGLE_PRIVATE_KEY",
   "TB_SPREADSHEET_ID",
+  // แท็บแผนที่: Sheet พิกัดบ้าน (pikad)
+  "PIKAD_SPREADSHEET_ID",
   // แจ้งเตือน LINE OA / อีเมล — token อยู่ใน env เท่านั้น ห้ามเก็บใน DB
   "LINE_CHANNEL_ACCESS_TOKEN",
   "SMTP_HOST",
