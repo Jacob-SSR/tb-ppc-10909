@@ -58,7 +58,7 @@ export async function loadAppData(db: Queryable, actor: Actor): Promise<AppData>
       );
 
   // นัดหมาย: ที่ยังค้างทั้งหมด + ประวัติย้อนหลัง 1 ปี (ไม่ต้องส่งทั้งหมดทุกครั้ง)
-  const apptSelect = `SELECT a.id, a.patient_id, a.contact_id, a.appt_date, a.appt_time, a.purpose, a.place, a.doctor_name, a.note,
+  const apptSelect = `SELECT a.id, a.patient_id, a.contact_id, a.appt_date, a.appt_time, a.appt_time_end, a.department, a.contact_point, a.instructions, a.telemed, a.purpose, a.place, a.doctor_name, a.note,
             a.status, a.source, a.visit_id, a.hosxp_oapp_id, a.hosxp_status, a.version, a.updated_at,
             u.display_name AS by_name, un.name AS by_unit_name
        FROM tb_appointments a LEFT JOIN tb_users u ON u.id = COALESCE(a.updated_by, a.created_by) LEFT JOIN tb_units un ON un.id = u.unit_id

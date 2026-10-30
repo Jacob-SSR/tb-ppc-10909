@@ -16,7 +16,7 @@ export async function refreshHosxpAppointments(
   db: Queryable, read: (ids: string[]) => Promise<Map<string, HosxpAppointment>> = readHosxpAppointments,
 ): Promise<{ checked: number; updated: number }> {
   const [rows] = await db.query<Row[]>(
-    `SELECT id, patient_id, contact_id, appt_date, appt_time, hosxp_oapp_id, hosxp_status FROM tb_appointments
+    `SELECT id, patient_id, contact_id, appt_date, appt_time, appt_time_end, hosxp_oapp_id, hosxp_status FROM tb_appointments
       WHERE deleted_at IS NULL AND status = 'scheduled' AND hosxp_oapp_id IS NOT NULL AND appt_date >= CURDATE() - INTERVAL 60 DAY`,
   );
   if (!rows.length) return { checked: 0, updated: 0 };
@@ -31,6 +31,7 @@ export async function refreshHosxpAppointments(
     else {
       if (h.date !== r.appt_date) set.appt_date = h.date;
       if ((h.time ?? null) !== (r.appt_time ?? null)) set.appt_time = h.time;
+      if (h.timeEnd !== undefined && h.timeEnd !== (r.appt_time_end ?? null)) set.appt_time_end = h.timeEnd;
     }
     if (h && (h.status ?? null) !== (r.hosxp_status ?? null)) set.hosxp_status = h.status;
     const cols = Object.keys(set);
@@ -95,6 +96,7 @@ export async function syncClinicAppointments(
     }
     await withTx(db, (conn) => createAppointment(conn, appointmentInput.parse({
       patient_id: patientId ?? null, contact_id: contactId ?? null, appt_date: a.date, appt_time: a.time,
+      appt_time_end: a.timeEnd, department: a.department, contact_point: a.contactPoint,
       purpose: (a.cause || a.clinic || "นัด HOSxP").slice(0, 100), place: [a.clinic, a.place].filter(Boolean).join(" · ").slice(0, 150) || null,
       doctor_name: a.doctor || null, note: a.note || null, status: a.came ? "done" : "scheduled", hosxp_oapp_id: a.oapp_id, hosxp_status: a.status,
     }), SYSTEM_ACTOR));

@@ -27,6 +27,11 @@ export interface Visit {
 
 /** นัดหมาย (tb_appointments) */
 export interface Appt {
+  appt_time_end?: string | null;
+  department?: string | null;
+  contact_point?: string | null;
+  instructions?: string | null;
+  telemed?: boolean | number;
   id: string;
   patient_id: string | null;
   contact_id: string | null;

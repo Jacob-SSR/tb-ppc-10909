@@ -131,8 +131,8 @@ export function Grid({ children }: { children: ReactNode }) {
   return <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">{children}</div>;
 }
 
-export function Modal({ open, onClose, title, subtitle, children, footer, wide }: {
-  open: boolean; onClose: () => void; title: ReactNode; subtitle?: ReactNode; children: ReactNode; footer?: ReactNode; wide?: boolean;
+export function Modal({ open, onClose, title, subtitle, children, footer, wide, scrollable }: {
+  open: boolean; onClose: () => void; title: ReactNode; subtitle?: ReactNode; children: ReactNode; footer?: ReactNode; wide?: boolean; scrollable?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -151,7 +151,7 @@ export function Modal({ open, onClose, title, subtitle, children, footer, wide }
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
-        className={cx("flex max-h-[95dvh] w-full flex-col rounded-t-2xl bg-white sm:max-h-none sm:rounded-2xl", wide ? "sm:max-w-4xl" : "sm:max-w-2xl")}
+        className={cx("flex max-h-[95dvh] w-full flex-col rounded-t-2xl bg-white sm:rounded-2xl", scrollable ? "sm:max-h-[calc(100dvh-3rem)]" : "sm:max-h-none", wide ? "sm:max-w-4xl" : "sm:max-w-2xl")}
       >
         <div className="flex items-start gap-3 border-b border-line px-4 py-3 sm:px-5">
           <div className="min-w-0 flex-1">

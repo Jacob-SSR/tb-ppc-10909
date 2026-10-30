@@ -7,6 +7,12 @@ import { api, ApiError } from "./api";
 import { th } from "./bits";
 import { useApp, type ModalState } from "./store";
 import type { Appt } from "./types";
+import { AppointmentTimePicker } from "./AppointmentTimePicker";
+import { AppointmentNoteTemplates } from "./AppointmentNoteTemplates";
+import { printAppointment } from "./printAppointment";
+import { APPT_INSTRUCTIONS } from "@/lib/tb/appointmentSlots";
+
+type AppointmentOptions = { clinics: string[]; departments: string[]; doctors: string[]; purposes: string[]; contactPoints: string[] };
 
 /** คลินิกนัดผู้สัมผัส (ชื่อเดียวกับคลินิกใน HOSxP) */
 const APPT_CLINICS = ["Household", "Close contact"] as const;
@@ -28,6 +34,8 @@ function body(a: Partial<Appt>, patch: Partial<Appt> = {}) {
     patient_id: x.patient_id ?? null, contact_id: x.contact_id ?? null, appt_date: x.appt_date, appt_time: x.appt_time || null,
     purpose: x.purpose, place: x.place || null, doctor_name: x.doctor_name || null, note: x.note || null, status: x.status ?? "scheduled",
     hosxp_oapp_id: x.hosxp_oapp_id ?? null,
+    appt_time_end: x.appt_time_end || null, department: x.department || null, contact_point: x.contact_point || null,
+    instructions: x.instructions || null, telemed: !!x.telemed,
   };
 }
 
@@ -53,29 +61,54 @@ export function AppointmentForm({ appt, back }: { appt: Partial<Appt>; back?: Mo
   const person = appt.patient_id ? patientById(appt.patient_id) : appt.contact_id ? contactById(appt.contact_id) : undefined;
   const canEdit = isAdmin || !!appt.contact_id; // user unit เห็นเฉพาะผู้สัมผัสในเขตอยู่แล้ว
   const [f, setF] = useState({
-    appt_date: appt.appt_date ?? "", appt_time: toTime(appt.appt_time), purpose: appt.purpose ?? "",
+    appt_date: appt.appt_date ?? data.today, appt_time: toTime(appt.appt_time), appt_time_end: toTime(appt.appt_time_end),
+    department: appt.department ?? "", contact_point: appt.contact_point ?? "", instructions: appt.instructions ?? "", telemed: !!appt.telemed, purpose: appt.purpose ?? "",
     place: appt.place ?? (isNew && person && "contact_type" in person ? APPT_CLINICS[person.contact_type === "close" ? 1 : 0] : isAdmin ? "" : data.user.unitName), doctor_name: appt.doctor_name ?? "", note: appt.note ?? "",
     status: (appt.status ?? "scheduled") as ApptStatus,
   });
   const [busy, setBusy] = useState(false);
-  const bind = (k: keyof typeof f) => ({ value: f[k], disabled: !canEdit, onChange: (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value })) });
+  const [options, setOptions] = useState<AppointmentOptions>({ clinics: [], departments: [], doctors: [], purposes: [], contactPoints: [] });
+  const [optionsError, setOptionsError] = useState("");
+  const [printAfter, setPrintAfter] = useState(false);
+  const [printForm, setPrintForm] = useState("full");
+  const [instruction, setInstruction] = useState("");
+  useEffect(() => {
+    if (!isAdmin || !data.features.hosxp) return;
+    const controller = new AbortController();
+    api<AppointmentOptions>("GET", "/api/hosxp/appointment-options")
+      .then((r) => { if (!controller.signal.aborted) setOptions(r); })
+      .catch((e: Error) => { if (!controller.signal.aborted) setOptionsError(e.message); });
+    return () => controller.abort();
+  }, [isAdmin, data.features.hosxp]);
+  const bind = <K extends Exclude<keyof typeof f, "telemed">>(k: K) => ({ value: f[k], disabled: !canEdit || busy, onChange: (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value })) });
   const close = () => open(back ?? null);
   // บันทึกเสร็จ: กลับหน้ารายละเอียดที่เปิดมา — แต่ถ้ามาจากหน้าเลือกคน (แท็บนัดหมาย) ปิดไปเลย
   const done = () => open(back?.type === "pickAppt" ? null : back ?? null);
 
   async function save(patch: Partial<typeof f> = {}) {
+    if (busy) return;
     const v = { ...f, ...patch };
     if (!v.appt_date) return toast("กรุณาระบุวันนัด", "bad");
     if (!v.purpose.trim()) return toast("กรุณาระบุเรื่องที่นัด", "bad");
+    if (isNew && !v.appt_time) return toast("กรุณาเลือกเวลานัด", "bad");
+    if (v.appt_time_end && v.appt_time_end < v.appt_time) return toast("เวลาสิ้นสุดต้องไม่ก่อนเวลาเริ่ม", "bad");
+    const printWindow = printAfter ? window.open("", "_blank") : null;
+    if (printWindow) printWindow.opener = null;
+    if (printAfter && !printWindow) return toast("กรุณาอนุญาตหน้าต่างป๊อปอัปเพื่อพิมพ์ใบนัด", "bad");
     setBusy(true);
     const payload = body(appt, { ...v, appt_time: v.appt_time || null });
     try {
       if (isNew) await api("POST", "/api/appointments", payload);
       else await api("PUT", `/api/appointments/${appt.id}`, { data: payload, version: appt.version });
       toast(patch.status ? `${APPT_STATUS_LABEL[patch.status]}แล้ว` : "บันทึกนัดแล้ว");
+      if (printWindow) {
+        try { printAppointment(printWindow, person, v, printForm === "compact"); }
+        catch { toast("บันทึกนัดแล้ว แต่เปิดใบนัดไม่สำเร็จ", "bad"); printWindow.close(); }
+      }
       await reload();
       done();
     } catch (err) {
+      printWindow?.close();
       toast((err as Error).message, "bad");
       if (err instanceof ApiError && err.status === 409) await reload();
     } finally {
@@ -99,19 +132,21 @@ export function AppointmentForm({ appt, back }: { appt: Partial<Appt>; back?: Mo
   return (
     <Modal
       open
-      onClose={close}
+      wide
+      scrollable
+      onClose={() => { if (!busy) close(); }}
       title={isNew ? "เพิ่มนัดหมาย" : "นัดหมาย"}
       subtitle={<>{who}{!isNew && <> · <ApptStatusBadge a={appt as Appt} today={data.today} /> <span className="text-xs">{APPT_SOURCE_LABEL[appt.source ?? "manual"]}{appt.by_name ? ` · แก้ล่าสุดโดย ${appt.by_name}` : ""}</span></>}</>}
       footer={
         <>
-          {!isNew && isAdmin && <Button variant="danger" size="sm" onClick={remove}>ลบ</Button>}
+          {!isNew && isAdmin && <Button variant="danger" size="sm" disabled={busy} onClick={remove}>ลบ</Button>}
           {!isNew && canEdit && refId && (
-            <Button variant="ghost" size="sm" onClick={() => open({
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => open({
               type: "history", id: refId, title: `ประวัติ · ${person?.name ?? ""}`, back: { type: "appointment", appt, back },
             })}>ประวัติการแก้ไข</Button>
           )}
           <span className="flex-1" />
-          <Button variant="ghost" onClick={close}>{canEdit ? "ยกเลิก" : "ปิด"}</Button>
+          <Button variant="ghost" disabled={busy} onClick={close}>{canEdit ? "ยกเลิก" : "ปิด"}</Button>
           {canEdit && <Button onClick={() => save()} disabled={busy}>{busy ? "กำลังบันทึก…" : "บันทึกนัด"}</Button>}
         </>
       }
@@ -121,14 +156,43 @@ export function AppointmentForm({ appt, back }: { appt: Partial<Appt>; back?: Mo
       )}
       <Grid>
         <Field label="วันนัด *"><Input type="date" {...bind("appt_date")} /></Field>
-        <Field label="เวลา"><Input type="time" {...bind("appt_time")} /></Field>
+        <Field label="เวลาเริ่ม *"><Input type="time" {...bind("appt_time")} /></Field>
+        <Field label="เวลาสิ้นสุด"><Input type="time" {...bind("appt_time_end")} /></Field>
         <Field label="สถานะ">
           <Select placeholder={false} options={(Object.keys(APPT_STATUS_LABEL) as ApptStatus[]).map((s) => ({ value: s, label: APPT_STATUS_LABEL[s] }))} {...bind("status")} />
         </Field>
-        <Field label="เรื่องที่นัด *" wide><ComboInput listId="dl-appt-purpose" options={APPT_PURPOSES} {...bind("purpose")} /></Field>
-        <Field label="คลินิก / สถานที่"><ComboInput listId="dl-appt-place" options={[...APPT_CLINICS, "คลินิกวัณโรค", data.user.unitName]} {...bind("place")} /></Field>
-        <Field label="แพทย์ / ผู้นัด"><Input {...bind("doctor_name")} /></Field>
-        <Field label="หมายเหตุ" wide><Textarea rows={2} {...bind("note")} placeholder="เช่น งดน้ำงดอาหาร, เก็บเสมหะตอนเช้า 2 ตลับ" /></Field>
+      </Grid>
+      <AppointmentTimePicker date={f.appt_date} time={f.appt_time} place={f.place} excludeId={appt.id} disabled={!canEdit || busy}
+        onSelect={(start, end) => setF((x) => ({ ...x, appt_time: start, appt_time_end: end }))} />
+      {optionsError && <p role="status" className="mb-3 text-sm text-warn">{optionsError}</p>}
+      <Grid>
+        <Field label="เรื่องที่นัด *" wide><ComboInput listId="dl-appt-purpose" options={[...new Set([...options.purposes, ...APPT_PURPOSES])]} {...bind("purpose")} /></Field>
+        <Field label="คลินิก / สถานที่"><ComboInput listId="dl-appt-place" options={[...new Set([...options.clinics, ...APPT_CLINICS, "คลินิกวัณโรค", data.user.unitName].filter(Boolean))]} {...bind("place")} /></Field>
+        <Field label="แพทย์ / ผู้นัด"><ComboInput listId="appt-doctors" options={options.doctors} {...bind("doctor_name")} /></Field>
+        <Field label="ห้องตรวจ"><ComboInput listId="appt-departments" options={options.departments} {...bind("department")} placeholder="เลือกหรือพิมพ์ห้องตรวจ" /></Field>
+        <Field label="จุดติดต่อ"><ComboInput listId="appt-contact-points" options={options.contactPoints} {...bind("contact_point")} placeholder="เลือกหรือพิมพ์จุดติดต่อ" /></Field>
+        <Field label="การปฏิบัติตัวก่อนพบแพทย์" wide>
+          <div className="mb-2 flex gap-2">
+            <ComboInput listId="appt-instructions" options={APPT_INSTRUCTIONS} value={instruction} disabled={!canEdit || busy} maxLength={200}
+              onChange={(e) => setInstruction(e.target.value)} placeholder="เลือกหรือพิมพ์คำแนะนำทีละรายการ" />
+            <Button variant="ghost" disabled={!canEdit || busy || !instruction.trim()} onClick={() => {
+              const lines = [...new Set([...f.instructions.split("\n").filter(Boolean), instruction.trim()])].join("\n");
+              if (lines.length > 2000) return toast("คำแนะนำยาวเกิน 2000 ตัวอักษร", "bad");
+              setF((x) => ({ ...x, instructions: lines })); setInstruction("");
+            }}>เพิ่ม</Button>
+          </div>
+          <Textarea rows={3} maxLength={2000} {...bind("instructions")} placeholder="รายการที่เลือก · แก้ไขหรือลบข้อความได้" />
+        </Field>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={f.telemed} disabled={!canEdit || busy} onChange={(e) => setF((x) => ({ ...x, telemed: e.target.checked }))} />Telemed</label>
+        <Field label="หมายเหตุ" wide>
+          <AppointmentNoteTemplates userId={data.user.id} note={f.note} disabled={!canEdit || busy} onSelect={(note) => setF((x) => ({ ...x, note }))} />
+          <Textarea rows={3} maxLength={2000} {...bind("note")} placeholder="พิมพ์ข้อความที่นี่" />
+          <div className="text-right text-xs text-muted">{f.note.length}/2000</div>
+        </Field>
+        <Field label="ฟอร์มใบนัด" wide>
+          <Select options={[{ value: "full", label: "ใบนัดพร้อมคำแนะนำ" }, { value: "compact", label: "ใบนัดแบบย่อ" }]} placeholder={false} value={printForm} onChange={(e) => setPrintForm(e.target.value)} disabled={busy} />
+          <label className="mt-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={printAfter} onChange={(e) => setPrintAfter(e.target.checked)} disabled={!canEdit || busy} />พิมพ์ใบนัดหลังจากบันทึก</label>
+        </Field>
       </Grid>
       {!isNew && canEdit && f.status === "scheduled" && (
         <div className="mt-3 flex flex-wrap gap-2 rounded-xl bg-background p-3">
@@ -220,6 +284,7 @@ export function PickApptRef() {
 }
 
 interface HosxpAppt {
+  timeEnd?: string | null; department?: string; contactPoint?: string;
   oapp_id: string; date: string; time: string | null; clinic: string; place: string; doctor: string; cause: string; note: string;
   status: string | null; active: boolean; came: boolean; tbClinic: boolean; imported: string | null;
 }
@@ -250,7 +315,8 @@ export function HosxpApptPicker({ patientId, contactId, back }: { patientId?: st
     try {
       for (const a of (list ?? []).filter((x) => pick.has(x.oapp_id))) {
         await api("POST", "/api/appointments", {
-          patient_id: patientId ?? null, contact_id: contactId ?? null, appt_date: a.date, appt_time: a.time, purpose: (a.cause || a.clinic || "นัด HOSxP").slice(0, 100),
+          patient_id: patientId ?? null, contact_id: contactId ?? null, appt_date: a.date, appt_time: a.time,
+          appt_time_end: a.timeEnd, department: a.department, contact_point: a.contactPoint, purpose: (a.cause || a.clinic || "นัด HOSxP").slice(0, 100),
           place: [a.clinic, a.place].filter(Boolean).join(" · ").slice(0, 150) || null, doctor_name: a.doctor || null, note: a.note || null,
           status: a.came ? "done" : a.active ? "scheduled" : "cancelled", hosxp_oapp_id: a.oapp_id, hosxp_status: a.status,
         });

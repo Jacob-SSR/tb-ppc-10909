@@ -10,7 +10,7 @@ import { newEntityId } from "../tb/ids.ts";
 import type { AppointmentInput } from "../validation.ts";
 import { type Actor, assertVersion, lockRow, type Row } from "./common.ts";
 
-const COLS = ["appt_date", "appt_time", "purpose", "place", "doctor_name", "note", "status", "hosxp_status"] as const;
+const COLS = ["appt_date", "appt_time", "purpose", "place", "doctor_name", "note", "status", "hosxp_status", "appt_time_end", "department", "contact_point", "instructions", "telemed"] as const;
 
 /** ผู้ป่วย index ของนัด (ผูกประวัติ) + ตรวจสิทธิ์ของ user unit */
 async function checkTarget(db: Queryable, ref: { patient_id?: string | null; contact_id?: string | null }, actor: Actor): Promise<string> {
@@ -54,11 +54,11 @@ export async function createAppointment(
   const source = opts.source ?? (input.hosxp_oapp_id ? "hosxp" : "manual");
   await db.execute(
     `INSERT INTO tb_appointments (id, patient_id, contact_id, appt_date, appt_time, purpose, place, doctor_name, note, status,
-                                  source, visit_id, hosxp_oapp_id, hosxp_status, created_by, updated_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                  source, visit_id, hosxp_oapp_id, hosxp_status, created_by, updated_by, appt_time_end, department, contact_point, instructions, telemed)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, input.patient_id ?? null, input.contact_id ?? null, input.appt_date, input.appt_time, input.purpose, input.place,
       input.doctor_name, input.note, input.status, source, opts.visitId ?? null, input.hosxp_oapp_id ?? null,
-      input.hosxp_status ?? null, actor.id, actor.id],
+      input.hosxp_status ?? null, actor.id, actor.id, input.appt_time_end ?? null, input.department ?? null, input.contact_point ?? null, input.instructions ?? null, input.telemed ? 1 : 0],
   );
   await writeAudit(db, {
     userId: actor.id, action: "add", entity: "appointment", entityId: id, patientId,
@@ -75,6 +75,10 @@ export async function updateAppointment(
   // แก้ได้แค่เนื้อหา — ย้ายไปเป็นนัดของคนอื่นไม่ได้
   const patientId = await checkTarget(db, { patient_id: cur.patient_id as string | null, contact_id: cur.contact_id as string | null }, actor);
   const next: Record<string, unknown> = { ...input, hosxp_status: input.hosxp_status ?? cur.hosxp_status };
+  // Older clients/imports omit new fields: preserve saved details.
+  for (const k of ["appt_time_end", "department", "contact_point", "instructions", "telemed"] as const) {
+    next[k] = input[k] === undefined ? cur[k] : k === "telemed" ? (input[k] ? 1 : 0) : input[k];
+  }
   const changes = diff(cur, next, COLS);
   if (!Object.keys(changes).length) return { id, version: Number(cur.version) };
   const cols = Object.keys(changes);

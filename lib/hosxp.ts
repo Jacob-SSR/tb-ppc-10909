@@ -119,6 +119,9 @@ export async function findHosxpPatient(by: { hn?: string; cid?: string }): Promi
 // อ่านอย่างเดียว: ดึงมาเก็บสำเนาใน tb_appointments (source='hosxp') ไม่เขียนกลับ HOSxP
 
 export interface HosxpAppointment {
+  timeEnd?: string | null;
+  department?: string;
+  contactPoint?: string;
   oapp_id: string;
   date: string;
   time: string | null;
@@ -158,6 +161,9 @@ function toHosxpAppointment(r: Record<string, unknown>): HosxpAppointment {
     oapp_id: String(r.oapp_id),
     date: String(r.nextdate).slice(0, 10),
     time: r.nexttime ? String(r.nexttime).slice(0, 8) : null,
+    timeEnd: r.nexttime_end && r.nexttime && String(r.nexttime_end) >= String(r.nexttime) ? String(r.nexttime_end).slice(0, 8) : null,
+    department: pick(r, "department_name"),
+    contactPoint: pick(r, "contact_point"),
     clinic: pick(r, "clinic_name", "clinic"),
     place: pick(r, "contact_point", "department_name"),
     doctor: pick(r, "doctor_name"),

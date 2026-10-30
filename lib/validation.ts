@@ -189,6 +189,11 @@ export const appointmentInput = z
     contact_id: id("C").nullable().optional(),
     appt_date: z.preprocess((v) => (blank(v) ? "" : toIso(v) ?? "invalid"), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "กรุณาระบุวันนัด")),
     appt_time: time,
+    appt_time_end: time.optional(),
+    department: text(150).optional(),
+    contact_point: text(150).optional(),
+    instructions: text(2000).optional(),
+    telemed: z.boolean().optional(),
     purpose: requiredText(100, "เรื่องที่นัด"),
     place: text(150),
     doctor_name: text(150),
@@ -197,5 +202,6 @@ export const appointmentInput = z
     hosxp_oapp_id: z.preprocess((v) => (blank(v) ? null : String(v).trim()), z.string().regex(/^\d{1,20}$/, "รหัสนัด HOSxP ไม่ถูกต้อง").nullable()).optional(),
     hosxp_status: text(20).optional(),
   })
+  .refine((v) => !v.appt_time_end || (!!v.appt_time && v.appt_time_end >= v.appt_time), { message: "เวลาสิ้นสุดต้องไม่ก่อนเวลาเริ่ม", path: ["appt_time_end"] })
   .refine((v) => !!v.patient_id !== !!v.contact_id, { message: "ต้องระบุผู้ป่วยหรือผู้สัมผัสอย่างใดอย่างหนึ่ง", path: ["patient_id"] });
 export type AppointmentInput = z.infer<typeof appointmentInput>;
