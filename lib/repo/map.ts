@@ -3,7 +3,7 @@
 import type { Queryable } from "../audit.ts";
 import { badRequest, notFound } from "../errors.ts";
 import { loadResidents, pikadConfigured, type Resident, residentAge, residentIndex } from "../pikad.ts";
-import { type LatLng, nameKey, nearby, normCid, pointOf } from "../tb/geo.ts";
+import { type LatLng, nameKey, nearbyMany, normCid, pointOf } from "../tb/geo.ts";
 import type { Row } from "./common.ts";
 
 export interface MapPoint extends LatLng {
@@ -12,6 +12,8 @@ export interface MapPoint extends LatLng {
 }
 
 export interface NearbyPerson extends LatLng {
+  centerId: string;
+  centerName: string;
   name: string;
   cid: string | null;
   age: number | null;
@@ -28,7 +30,6 @@ export interface NearbyPerson extends LatLng {
 }
 
 export const MAX_RADIUS = 500;
-const MAX_RESULTS = 300;
 
 /** pikad อ่านไม่ได้ → แผนที่ยังใช้พิกัดในทะเบียนได้ */
 async function residentsOrError(fresh = false): Promise<{ list: Resident[]; error: string | null }> {
@@ -62,15 +63,22 @@ export async function mapPoints(db: Queryable, fresh = false) {
   return { pikad: pikadConfigured(), residents: list.length, error, points };
 }
 
-export async function nearbyPeople(db: Queryable, patientId: string, radius: number) {
+export async function nearbyPeople(db: Queryable, patientId: string | string[], radius: number) {
   if (!Number.isFinite(radius) || radius < 10 || radius > MAX_RADIUS) throw badRequest(`รัศมีต้องอยู่ระหว่าง 10–${MAX_RADIUS} ม.`);
-  const [[p]] = await db.query<Row[]>("SELECT id, name, cid, lat, lng FROM tb_patients WHERE id = ? AND deleted_at IS NULL", [patientId]);
-  if (!p) throw notFound("ไม่พบผู้ป่วย");
+  const ids = [...new Set(Array.isArray(patientId) ? patientId : [patientId])].sort();
+  if (!ids.length || ids.some(id => !/^P[0-9a-f]{10}$/.test(id))) throw badRequest("รหัสผู้ป่วยไม่ถูกต้อง");
+  const placeholders = ids.map(() => "?").join(",");
+  const [selectedRows] = await db.query<Row[]>(`SELECT id, name, cid, lat, lng FROM tb_patients WHERE id IN (${placeholders}) AND deleted_at IS NULL`, ids);
+  if (selectedRows.length !== ids.length) throw notFound("ไม่พบผู้ป่วยที่เลือก");
   const { list, error } = await residentsOrError();
-  const center = locate(p as unknown as PatientGeo, residentIndex(list));
-  if (!center) throw badRequest("ผู้ป่วยรายนี้ยังไม่มีพิกัดบ้าน");
-
-  const [contacts] = await db.query<Row[]>("SELECT id, name, cid FROM tb_contacts WHERE patient_id = ? AND deleted_at IS NULL", [patientId]);
+  const index = residentIndex(list);
+  const centers = (selectedRows as unknown as PatientGeo[]).map(p => {
+    const pt = locate(p, index);
+    if (!pt) throw badRequest(`ผู้ป่วย ${p.name} ยังไม่มีพิกัดบ้าน`);
+    return { ...pt, id: p.id, name: p.name };
+  });
+  const centerById = new Map(centers.map(c => [c.id, c]));
+  const [contacts] = await db.query<Row[]>(`SELECT id, name, cid FROM tb_contacts WHERE patient_id IN (${placeholders}) AND deleted_at IS NULL`, ids);
   const [patients] = await db.query<Row[]>("SELECT id, name, cid FROM tb_patients WHERE deleted_at IS NULL");
   const keyed = (rows: Row[]) => {
     const byCid = new Map<string, string>();
@@ -84,16 +92,25 @@ export async function nearbyPeople(db: Queryable, patientId: string, radius: num
   };
   const contactOf = keyed(contacts);
   const patientOf = keyed(patients);
-  const selfCid = normCid(p.cid);
-  const selfName = nameKey(p.name);
-
-  const people: NearbyPerson[] = nearby(center, list, radius)
-    .filter((r) => !(r.cid && r.cid === selfCid) && nameKey(r.name) !== selfName) // ตัวผู้ป่วยเอง
-    .slice(0, MAX_RESULTS)
+  // Without a CID, preserve the source row rather than merging namesakes in the same home.
+  const residents = list.map((r, sourceRow) => ({ ...r, sourceRow }));
+  const identity = (r: Resident & { sourceRow: number }) => r.cid ? `cid:${r.cid}` : `row:${r.sourceRow}`;
+  const excluded = new Set<string>();
+  for (const p of selectedRows as unknown as PatientGeo[]) {
+    const cid = normCid(p.cid);
+    if (cid.length === 13) excluded.add(`cid:${cid}`);
+    else {
+      const hit = index.find(p.cid, p.name);
+      if (hit) excluded.add(identity(residents[list.indexOf(hit.r)]));
+    }
+  }
+  const people: NearbyPerson[] = nearbyMany(centers, residents, radius, identity)
+    .filter(r => !excluded.has(identity(r)))
     .map((r) => ({
+      centerId: r.centerId, centerName: centerById.get(r.centerId)!.name,
       lat: r.lat, lng: r.lng, name: r.name, cid: r.cid, age: residentAge(r), distance: r.distance, ring: r.ring,
       sex: r.sex, nationality: r.nationality, deceased: r.deceased, address: r.address, phone: r.phone,
       mapLink: r.mapLink, contactId: contactOf(r.cid, r.name), patientId: patientOf(r.cid, r.name),
     }));
-  return { center, radius, error, people };
+  return { center: centers[0], centers, radius, error, people };
 }

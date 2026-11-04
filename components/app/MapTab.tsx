@@ -1,12 +1,12 @@
 "use client";
-// แท็บแผนที่ (admin): หมุดผู้ป่วย · เลือกผู้ป่วย → วง 10/50/200 ม. · ติ้ก "ใครใกล้คนนี้บ้าง" → รายชื่อรอบบ้าน + วงที่แนะนำ
+// แท็บแผนที่ (admin): หมุดผู้ป่วย · เลือกผู้ป่วย → วง 10/50/200 ม. · ติ้ก "ใครใกล้ผู้ป่วยที่เลือกบ้าง" → รายชื่อรอบบ้าน + วงที่แนะนำ
 // → "บันทึกเป็นผู้สัมผัส" เปิดฟอร์มผู้สัมผัสกรอกให้ (ชื่อ เลขบัตร อายุ วง ประเภท) — แบบ pikad-phlapphla-chai / tb-map ใน ppc-hos
 import "leaflet/dist/leaflet.css";
 import type * as Leaflet from "leaflet";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Empty, Input, Select, toast } from "@/components/ui";
 import { formatThaiDate } from "@/lib/tb/dates";
-import { contactTypeOfRing, formatDistance, nearby, pointOf, RING_LABEL, RING_MAX } from "@/lib/tb/geo";
+import { contactTypeOfRing, formatDistance, nearbyMany, pointOf, RING_LABEL, RING_MAX } from "@/lib/tb/geo";
 import type { MapPoint, NearbyPerson } from "@/lib/repo/map";
 import { api } from "./api";
 import { OutcomeBadge, patientAddress } from "./bits";
@@ -38,7 +38,8 @@ export function MapTab() {
   const [revision, setRevision] = useState(0);
   const [allYears, setAllYears] = useState(false);
   const [q, setQ] = useState("");
-  const [sel, setSel] = useState<string | null>(null);
+  const [selection, setSelection] = useState<string[]>([]);
+  const [exporting, setExporting] = useState(false);
   const [radius, setRadius] = useState(200);
   const [showNear, setShowNear] = useState(false);
   const [nearRes, setNearRes] = useState<{ key: string; res?: NearbyRes; err?: string } | null>(null);
@@ -94,7 +95,13 @@ export function MapTab() {
   }, [data.patients, allYears, fy, pts]);
 
   const shown = located.withPt.filter((p) => !q || norm(`${p.name} ${p.hn} ${p.area ?? ""}`).includes(norm(q)));
-  const selected = sel ? located.withPt.find((p) => p.id === sel) ?? null : null;
+  const selectedPatients = useMemo(() => located.withPt.filter(p => selection.includes(p.id)), [located.withPt, selection]);
+  const selected = selectedPatients[0] ?? null;
+  const selectedIds = useMemo(() => selectedPatients.map(p => p.id).sort(), [selectedPatients]);
+  const sel = selectedIds.join(",");
+  function pick(id: string) {
+    setSelection(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
+  }
 
   // หมุดผู้ป่วย
   useEffect(() => {
@@ -103,12 +110,12 @@ export function MapTab() {
     if (!ready || !Lf || !layer || !map.current) return;
     layer.clearLayers();
     for (const p of shown) {
-      const on = p.id === sel;
+      const on = selectedIds.includes(p.id);
       Lf.circleMarker([p.pt.lat, p.pt.lng], {
         radius: on ? 11 : 8, weight: on ? 3 : 2, color: "#fff", fillColor: outcomeHex(p.outcome), fillOpacity: 0.95,
       })
         .bindTooltip(esc(p.name), { direction: "top" })
-        .on("click", () => setSel(p.id))
+        .on("click", () => pick(p.id))
         .addTo(layer);
     }
     if (!sel && shown.length) map.current.fitBounds(Lf.latLngBounds(shown.map((p) => [p.pt.lat, p.pt.lng])), { padding: [30, 30], maxZoom: 15 });
@@ -116,13 +123,13 @@ export function MapTab() {
   }, [ready, shown.map((p) => `${p.id}:${p.pt.lat}:${p.pt.lng}`).join(), sel]);
 
   // คนรอบบ้าน (ชีตประชากร) — โหลดใหม่เมื่อเปลี่ยนผู้ป่วย / รัศมี / บันทึกผู้สัมผัสเพิ่ม
-  const contactCount = sel ? contactsOf(sel).length : 0;
+  const contactCount = selectedIds.map(id => `${id}:${contactsOf(id).map(c => c.id).sort().join(";")}`).join(",");
   const nearKey = sel && showNear && pts?.pikad ? `${sel}|${radius}|${contactCount}|${revision}` : null;
   useEffect(() => {
     if (!nearKey) return;
     let dead = false;
     const [id, r] = nearKey.split("|");
-    api<NearbyRes>("GET", `/api/map/nearby?patient=${id}&radius=${r}`)
+    api<NearbyRes>("GET", `/api/map/nearby?patients=${id}&radius=${r}`)
       .then((res) => !dead && setNearRes({ key: nearKey, res }))
       .catch((e) => !dead && setNearRes({ key: nearKey, err: e.message }));
     return () => {
@@ -136,8 +143,8 @@ export function MapTab() {
 
   // ผู้ป่วยวัณโรครายอื่นในรัศมี (จากทะเบียน — คำนวณในเครื่อง)
   const nearPatients = useMemo(
-    () => (selected ? nearby(selected.pt, located.withPt.filter((p) => p.id !== selected.id).map((p) => ({ ...p, lat: p.pt.lat, lng: p.pt.lng })), radius) : []),
-    [selected, located.withPt, radius],
+    () => nearbyMany(selectedPatients.map(p => ({ ...p.pt, id: p.id })), located.withPt.filter(p => !selectedIds.includes(p.id)).map(p => ({ ...p, lat: p.pt.lat, lng: p.pt.lng })), radius, p => p.cid || p.id),
+    [selectedPatients, selectedIds, located.withPt, radius],
   );
   const people = (near?.people ?? []).filter((n) => !onlyNew || (!n.contactId && !n.patientId));
 
@@ -147,13 +154,15 @@ export function MapTab() {
     const layer = focusLayer.current;
     if (!ready || !Lf || !layer || !map.current) return;
     layer.clearLayers();
-    if (!selected) return;
-    const c: [number, number] = [selected.pt.lat, selected.pt.lng];
-    for (const r of [3, 2, 1] as const) {
-      if (RING_MAX[r] > radius && r !== 1) continue;
-      Lf.circle(c, { radius: RING_MAX[r], color: RING_HEX[r], weight: 2, dashArray: r === 1 ? undefined : "6 6", fillOpacity: r === 1 ? 0.15 : 0.04 }).addTo(layer);
+    if (!selectedPatients.length) return;
+    for (const patient of selectedPatients) {
+      const c: [number, number] = [patient.pt.lat, patient.pt.lng];
+      for (const r of [3, 2, 1] as const) {
+        if (RING_MAX[r] > radius && r !== 1) continue;
+        Lf.circle(c, { radius: RING_MAX[r], color: RING_HEX[r], weight: 2, dashArray: r === 1 ? undefined : "6 6", fillOpacity: r === 1 ? 0.15 : 0.04 }).addTo(layer);
+      }
+      if (radius > RING_MAX[3]) Lf.circle(c, { radius, color: OUTSIDE_HEX, weight: 1, dashArray: "2 6", fill: false }).addTo(layer);
     }
-    if (radius > RING_MAX[3]) Lf.circle(c, { radius, color: OUTSIDE_HEX, weight: 1, dashArray: "2 6", fill: false }).addTo(layer);
     if (showNear) {
       for (const n of near?.people ?? []) {
         Lf.circleMarker([n.lat, n.lng], {
@@ -163,18 +172,38 @@ export function MapTab() {
           .addTo(layer);
       }
     }
-  }, [ready, selected, radius, showNear, near]);
+  }, [ready, selectedPatients, radius, showNear, near]);
 
   // เลื่อนไปบ้านผู้ป่วยเฉพาะตอนเลือก / เปลี่ยนรัศมี (ผลค้นมาทีหลังไม่ดึงแผนที่กลับ)
-  const focusAt = selected ? `${selected.pt.lat},${selected.pt.lng}` : null;
+  const focusAt = selectedPatients.map(p => `${p.pt.lat},${p.pt.lng}`).join(";");
   useEffect(() => {
     if (!ready || !map.current || !focusAt) return;
-    const [lat, lng] = focusAt.split(",").map(Number);
-    map.current.flyTo([lat, lng], radius > 200 ? 16 : 17, { duration: 0.6 });
+    const Lf = lib.current;
+    if (!Lf) return;
+    const bounds = Lf.latLngBounds([]);
+    for (const coords of focusAt.split(";")) {
+      const [lat, lng] = coords.split(",").map(Number);
+      bounds.extend(Lf.latLng(lat, lng).toBounds(radius * 2));
+    }
+    map.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 17 });
   }, [ready, focusAt, radius]);
 
+  async function exportPeople() {
+    if (!sel || loadingNear || !near || near.error || !people.length) return;
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/map/nearby?patients=${sel}&radius=${radius}&format=xlsx&onlyNew=${onlyNew ? 1 : 0}`, { cache: "no-store" });
+      if (!res.ok) throw new Error((await res.json()).error || "Export ไม่สำเร็จ");
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url; a.download = `คนรอบบ้าน_${selectedPatients.length}คน_รัศมี${radius}ม.xlsx`;
+      a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) { toast(e instanceof Error ? e.message : "Export ไม่สำเร็จ", "bad"); }
+    finally { setExporting(false); }
+  }
+
   function record(n: NearbyPerson) {
-    const p = patientById(sel);
+    const p = patientById(n.centerId);
     if (!p) return;
     const ring = n.ring ?? 3;
     open({
@@ -211,15 +240,22 @@ export function MapTab() {
       </div>
 
       <aside className="flex min-w-0 flex-col gap-3">
+        {selectedPatients.length > 0 && (
+          <div className="rounded-xl border border-line p-3 text-sm">
+            <p className="font-semibold">เลือกแล้ว {selectedPatients.length} คน · เพิ่ม / ลดได้จากรายชื่อหรือหมุด</p>
+            <div className="mt-2 flex flex-wrap gap-2">{selectedPatients.map(p => <button key={p.id} onClick={() => pick(p.id)} className="rounded-full border border-brand px-2 py-1">{p.name} ×</button>)}</div>
+            <p className="mt-2 text-muted">รวมคนซ้ำแล้ว ใช้ระยะและวงจากผู้ป่วยที่ใกล้ที่สุด</p>
+          </div>
+        )}
         {selected ? (
           <SelectedPanel
-            p={selected} radius={radius} setRadius={setRadius} showNear={showNear} setShowNear={setShowNear}
+            exporting={exporting} onExport={exportPeople} p={selected} radius={radius} setRadius={setRadius} showNear={showNear} setShowNear={setShowNear}
             pikad={!!pts?.pikad} near={near} nearErr={nearErr} loading={loadingNear} people={people} onlyNew={onlyNew} setOnlyNew={setOnlyNew}
-            nearPatients={nearPatients} onBack={() => setSel(null)} onPick={setSel} onRecord={record}
+            nearPatients={nearPatients} onBack={() => setSelection([])} onPick={pick} onRecord={record}
             onOpenPatient={(id) => open({ type: "patient", id })}
             onOpenContact={(id) => { const c = contactById(id); if (c) open({ type: "contact", contact: c }); }}
           />
-        ) : (
+        ) : null}
           <>
             <div className="flex flex-wrap items-center gap-2">
               <Input type="search" placeholder="ค้นหา ชื่อ / HN / ตำบล" value={q} onChange={(e) => setQ(e.target.value)} className="min-w-40 flex-1" />
@@ -235,7 +271,7 @@ export function MapTab() {
             <ul className="flex max-h-[55vh] flex-col gap-1.5 overflow-y-auto lg:max-h-none">
               {shown.map((p) => (
                 <li key={p.id}>
-                  <button onClick={() => setSel(p.id)} className="flex w-full items-center gap-2 rounded-xl border border-line bg-card px-3 py-2 text-left hover:border-brand-2">
+                  <button onClick={() => pick(p.id)} aria-pressed={selectedIds.includes(p.id)} className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left hover:border-brand-2 ${selectedIds.includes(p.id) ? "border-brand bg-mint" : "border-line bg-card"}`}>
                     <i className="inline-block size-3 shrink-0 rounded-full" style={{ background: outcomeHex(p.outcome) }} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium">{p.name}</span>
@@ -258,13 +294,13 @@ export function MapTab() {
               </details>
             )}
           </>
-        )}
       </aside>
     </div>
   );
 }
 
 function SelectedPanel(props: {
+  exporting: boolean; onExport: () => void;
   p: Patient & { pt: MapPoint }; radius: number; setRadius: (r: number) => void; showNear: boolean; setShowNear: (v: boolean) => void;
   pikad: boolean; near: NearbyRes | null; nearErr: string; loading: boolean; people: NearbyPerson[]; onlyNew: boolean; setOnlyNew: (v: boolean) => void;
   nearPatients: (Patient & { distance: number; ring: 1 | 2 | 3 | null })[];
@@ -296,7 +332,7 @@ function SelectedPanel(props: {
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex flex-1 items-center gap-2 rounded-xl border border-brand-2 bg-mint px-3 py-2 font-medium text-brand">
           <input type="checkbox" className="size-5" checked={props.showNear} onChange={(e) => props.setShowNear(e.target.checked)} />
-          ใครใกล้คนนี้บ้าง
+          ใครใกล้ผู้ป่วยที่เลือกบ้าง
         </label>
         <Select className="w-auto" placeholder={false} value={radius} onChange={(e) => props.setRadius(Number(e.target.value))}
           options={RADII.map((r) => ({ value: r, label: `รัศมี ${formatDistance(r)}` }))} />
@@ -329,6 +365,7 @@ function SelectedPanel(props: {
                 รอบบ้านในรัศมี {formatDistance(radius)}: <b>{near.people.length}</b> คน
                 {" · "}วง 1 {counts[0]} · วง 2 {counts[1]} · วง 3 {counts[2]}
               </p>
+              <Button size="sm" disabled={props.exporting || props.loading || !!near.error || !props.people.length} onClick={props.onExport}>{props.exporting ? "กำลัง Export…" : "Export Excel (รายชื่อที่แสดง)"}</Button>
               <label className="flex items-center gap-1.5 text-sm text-muted">
                 <input type="checkbox" checked={props.onlyNew} onChange={(e) => props.setOnlyNew(e.target.checked)} /> ซ่อนคนที่บันทึกเป็นผู้สัมผัส / ผู้ป่วยแล้ว
               </label>
@@ -341,6 +378,7 @@ function SelectedPanel(props: {
                       <RingBadge ring={n.ring} />
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
+                      <span>ใกล้ {n.centerName}</span>
                       {n.age != null && <span>อายุ {n.age} ปี</span>}
                       {n.sex && <span>{n.sex}</span>}
                       {n.nationality && <span>สัญชาติ {n.nationality}</span>}

@@ -87,3 +87,22 @@ export function nearby<T extends LatLng>(center: LatLng, list: T[], radius: numb
     .filter((p) => p.distance <= radius)
     .sort((a, b) => a.distance - b.distance);
 }
+
+/** Merge overlapping searches before assigning rings; ties use the lowest center ID. */
+export function nearbyMany<T extends LatLng, C extends LatLng & { id: string }>(
+  centers: C[], list: T[], radius: number, keyOf: (p: T) => string,
+): (T & { distance: number; ring: 1 | 2 | 3 | null; centerId: string })[] {
+  const unique = new Map<string, T & { distance: number; ring: 1 | 2 | 3 | null; centerId: string }>();
+  const ordered = [...centers].sort((a, b) => a.id.localeCompare(b.id));
+  for (const p of list) {
+    let distance = Infinity, centerId = "";
+    for (const c of ordered) {
+      const d = distanceMeters(c, p);
+      if (d < distance) { distance = d; centerId = c.id; }
+    }
+    if (distance > radius) continue;
+    const key = keyOf(p), old = unique.get(key);
+    if (!old || distance < old.distance) unique.set(key, { ...p, distance, ring: ringOf(distance), centerId });
+  }
+  return [...unique.values()].sort((a, b) => a.distance - b.distance || keyOf(a).localeCompare(keyOf(b)));
+}
